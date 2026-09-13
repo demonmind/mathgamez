@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Number Quest — Parent Sign Up</title>
+<link rel="stylesheet" href="/css/theme.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="flag">Set sail!</span>
+    <h1>Create Your <span>Family</span></h1>
+    <p class="sub">Sign up to add your kids and track their treasure</p>
+  </header>
+  <div class="card">
+    <form id="signupForm">
+      <div class="field">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" autocomplete="email" required>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="new-password" minlength="8" required>
+      </div>
+      <div class="field">
+        <label><input type="checkbox" id="joinToggle"> I already have a family code to join</label>
+      </div>
+      <div class="field hidden" id="familyCodeField">
+        <label for="familyCode">Family Code</label>
+        <input type="text" id="familyCode" name="familyCode" maxlength="6" autocomplete="off" style="text-transform:uppercase; letter-spacing:3px;">
+      </div>
+      <p class="form-error" id="formError"></p>
+      <button type="submit" class="submit-btn">Create Account</button>
+    </form>
+    <p class="link-row">Already have an account? <a href="/parent/login.html">Log in</a></p>
+  </div>
+  <footer><a href="/" style="color:inherit;">← Back home</a></footer>
+</div>
+<script src="/js/api.js"></script>
+<script src="/js/parent-signup.js"></script>
+</body>
+</html>

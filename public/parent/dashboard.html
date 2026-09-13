@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Number Quest — Family Dashboard</title>
+<link rel="stylesheet" href="/css/theme.css">
+<link rel="stylesheet" href="/css/game.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="flag">Captain's Quarters</span>
+    <h1>Family <span>Dashboard</span></h1>
+    <p class="sub">Add kids, set PINs, and redeem earned treasure minutes</p>
+  </header>
+
+  <div class="card">
+    <div class="topbar">
+      <span></span>
+      <button class="back-btn" id="logoutBtn">Log out</button>
+    </div>
+
+    <p class="form-note">Share this code (or the direct play link) so your kids can log in:</p>
+    <div class="family-code-display" id="familyCodeDisplay">------</div>
+    <p class="form-note" id="playLinkNote"></p>
+
+    <h3 style="margin-top:24px;">Your Children</h3>
+    <div id="childrenList"></div>
+
+    <details style="margin-top:10px;">
+      <summary style="cursor:pointer; color: var(--sea-foam);">+ Add a child</summary>
+      <form id="addChildForm" style="margin-top:14px;">
+        <div class="field">
+          <label for="childName">Name</label>
+          <input type="text" id="childName" maxlength="40" required>
+        </div>
+        <div class="field">
+          <label>Avatar</label>
+          <div class="avatar-grid" id="avatarPicker"></div>
+        </div>
+        <div class="field">
+          <label for="childPin">4-digit PIN</label>
+          <input type="text" id="childPin" inputmode="numeric" maxlength="4" pattern="\d{4}" required>
+        </div>
+        <p class="form-error" id="addChildError"></p>
+        <button type="submit" class="submit-btn">Add Child</button>
+      </form>
+    </details>
+  </div>
+
+  <footer><a href="/" style="color:inherit;">← Back home</a></footer>
+</div>
+<script src="/js/api.js"></script>
+<script src="/js/parent-dashboard.js"></script>
+</body>
+</html>

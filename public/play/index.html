@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Number Quest — Let's Play!</title>
+<link rel="stylesheet" href="/css/theme.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="flag">Ahoy!</span>
+    <h1>Enter Your <span>Family Code</span></h1>
+    <p class="sub">Ask a grown-up if you don't know it</p>
+  </header>
+  <div class="card">
+    <form id="codeForm">
+      <div class="field">
+        <label for="code">Family Code</label>
+        <input type="text" id="code" maxlength="6" autocomplete="off"
+               style="text-align:center; font-size:28px; letter-spacing:6px; text-transform:uppercase;" required>
+      </div>
+      <p class="form-error" id="formError"></p>
+      <button type="submit" class="submit-btn">Let's Go! ⚓</button>
+    </form>
+  </div>
+  <footer><a href="/" style="color:inherit;">← Back home</a></footer>
+</div>
+<script src="/js/play-index.js"></script>
+</body>
+</html>
