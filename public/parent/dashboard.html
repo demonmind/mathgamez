@@ -6,6 +6,7 @@
 <title>Number Quest — Family Dashboard</title>
 <link rel="stylesheet" href="/css/theme.css">
 <link rel="stylesheet" href="/css/game.css">
+<link rel="stylesheet" href="/css/admin.css">
 </head>
 <body>
 <div class="wrap">
@@ -47,9 +48,54 @@
         <button type="submit" class="submit-btn">Add Child</button>
       </form>
     </details>
+
+    <h3 style="margin-top:28px;">Approved Videos</h3>
+    <p class="form-note">Kids can spend treasure minutes to watch only videos you add here.</p>
+    <div id="videosList"></div>
+
+    <details style="margin-top:10px;">
+      <summary style="cursor:pointer; color: var(--sea-foam);">+ Add a video</summary>
+      <form id="addVideoForm" style="margin-top:14px;">
+        <div class="field">
+          <label for="videoUrl">YouTube link</label>
+          <input type="text" id="videoUrl" placeholder="https://www.youtube.com/watch?v=..." required>
+        </div>
+        <div class="field">
+          <label for="videoTitle">Title (shown to your kid)</label>
+          <input type="text" id="videoTitle" maxlength="200" required>
+        </div>
+        <p class="form-error" id="addVideoError"></p>
+        <button type="submit" class="submit-btn">Add Video</button>
+      </form>
+    </details>
+
+    <h3 style="margin-top:28px;">Video Search (optional)</h3>
+    <p class="form-note" id="searchStatusNote">Loading…</p>
+    <p class="form-note">
+      Enabling this lets your kid search YouTube directly (in addition to the approved list above),
+      filtered with YouTube's "strict" safe-search setting. That filter is a best-effort heuristic,
+      not a guarantee - some inappropriate or ad-heavy content can still slip through. Only turn this
+      on if you're comfortable with that tradeoff.
+    </p>
+    <details style="margin-top:10px;">
+      <summary style="cursor:pointer; color: var(--sea-foam);">+ Set up / change API key</summary>
+      <form id="searchSettingsForm" style="margin-top:14px;">
+        <div class="field">
+          <label for="youtubeApiKey">YouTube Data API key</label>
+          <input type="password" id="youtubeApiKey" placeholder="Paste your API key" autocomplete="off">
+        </div>
+        <p class="form-note">
+          Free from Google Cloud Console: create a project, enable "YouTube Data API v3", then create
+          an API key under Credentials. <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer">console.cloud.google.com/apis/credentials</a>
+        </p>
+        <p class="form-error" id="searchSettingsError"></p>
+        <button type="submit" class="submit-btn">Save & Enable</button>
+        <button type="button" class="danger-btn" id="disableSearchBtn" style="margin-left:8px;">Disable Search</button>
+      </form>
+    </details>
   </div>
 
-  <footer><a href="/" style="color:inherit;">← Back home</a></footer>
+  <footer><a href="/">← Back home</a></footer>
 </div>
 <script src="/js/api.js"></script>
 <script src="/js/parent-dashboard.js"></script>

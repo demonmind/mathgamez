@@ -3,8 +3,9 @@
 A self-hosted, multi-family pirate-themed math game. Parents sign up, create
 a family, and add kids; kids log in with a family code + avatar + 4-digit
 PIN (no email/password) and play. Passing a stage at 85%+ accuracy earns 5
-minutes of screen time, tracked in-app and redeemed manually by a parent in
-real life.
+minutes of screen time, which a kid can either redeem manually with a
+parent for real-life screen time, or spend in-app to watch a video a
+parent specifically approved.
 
 ## Stack
 
@@ -77,6 +78,59 @@ This is a deliberate simplicity tradeoff (plain SQL init scripts instead of
 a migration framework) - fine for a small self-hosted instance, but worth
 revisiting if the schema starts changing often.
 
+## Watch-a-video reward redemption
+
+Besides the parent's manual "Mark as Redeemed" button, a kid can spend their
+own treasure minutes in-app to watch a video - either from a **parent-
+curated allowlist** (default, always available), or, if a parent opts in,
+by **searching YouTube directly**. Videos play embedded via
+`youtube-nocookie.com` with no related-video suggestions or comments.
+
+Minutes are spent the moment a kid chooses to watch (same "spend it, no
+refund" model as the parent's manual redeem) - there's no server-side
+tracking of actual watch time, just of how many minutes were chosen to
+redeem for that video. The parent's reward history shows which video was
+watched for each self-redeemed entry, including search-based picks.
+
+### Optional: open video search
+
+Off by default. A parent enables it per-family from the dashboard's "Video
+Search" section by pasting their own YouTube Data API v3 key (free from
+[Google Cloud Console](https://console.cloud.google.com/apis/credentials) -
+enable "YouTube Data API v3" on a project, then create an API key under
+Credentials). The key is write-only from the browser's perspective - it's
+never sent back in any API response after saving.
+
+Search results are filtered with YouTube's `safeSearch=strict` parameter,
+which is a best-effort content filter, **not a guarantee** - inappropriate
+or ad-heavy content can still surface. This tradeoff is stated plainly in
+the dashboard UI; only enable it if you're comfortable with it. The search
+call happens entirely server-side (`server/lib/youtube.js`) so the API key
+never reaches the browser, and is rate-limited per child
+(`videoSearchLimiter`) to protect the family's API quota.
+
+## Superadmin console
+
+There's an optional operator role that can view and manage every family,
+parent, and child on the instance - for you, not the neighbor families. It
+has no public signup form; you provision it via `.env`:
+
+```
+ADMIN_EMAIL=you@example.com
+ADMIN_PASSWORD=some-strong-password
+```
+
+Restart the `app` service (`docker compose up -d app`) and the account is
+created/updated automatically on boot - changing `ADMIN_PASSWORD` and
+restarting rotates the password. Leave both blank to disable the feature
+entirely (no admin account exists, and the login route just rejects
+everything).
+
+Log in at `/admin/login.html`. From there you can see every family's code,
+parent(s), and children; reset a parent's password or a child's PIN; delete
+a single parent or child; or delete an entire family (cascades to that
+family's parents, children, game history, and reward ledger - irreversible).
+
 ## Running behind a reverse proxy
 
 The app works fine on a bare subpath-free subdomain or behind nginx/Caddy.
@@ -90,12 +144,27 @@ When you put a reverse proxy in front of it:
 - Forward `X-Forwarded-For` and `X-Forwarded-Proto` from your proxy config
   (both nginx and Caddy do this by default).
 
+### If you're behind Cloudflare specifically
+
+Cloudflare caches static file extensions (`.js`, `.css`, etc.) at its edge
+*and* tells browsers to cache them, using its own default Browser Cache TTL
+(commonly 4 hours) - **regardless of what this app's origin sends** (Express
+already sends `Cache-Control: max-age=0`, i.e. "always revalidate," but
+Cloudflare overrides it for these file types on most plans). Practically:
+after you redeploy changed `public/js/*` or `public/css/*` files, visitors
+who already loaded the app may keep running the old JS/CSS for up to that
+TTL. After a deploy that touches frontend files, either purge Cloudflare's
+cache for the domain (dashboard: Caching → Configuration → Purge Cache, or
+the `/zones/:id/purge_cache` API), or add a Cache Rule for the hostname to
+bypass/respect-origin caching for `/js/*` and `/css/*`.
+
 ## Security notes
 
 - Parent passwords and kid PINs are hashed with bcrypt; PINs are never
   emailed or shown in plaintext after creation.
-- Parent login, signup, and child PIN login are all rate-limited
-  (`server/middleware/rateLimiters.js`).
+- Parent login, signup, child PIN login, and admin login are all
+  rate-limited (`server/middleware/rateLimiters.js`) - the admin limiter is
+  the tightest, since that account can see/delete every family.
 - Every child/family-scoped query is filtered server-side by the session's
   `family_id`/`child_id` - never by a client-supplied id alone.
 - Accuracy and reward-granting are computed entirely server-side

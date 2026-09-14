@@ -14,8 +14,12 @@
   let missingValue = "";   // free-typed value for Stage 3 missing-number puzzles
 
   let myChildId = null;
+  let videoSearchEnabled = false;
   let currentAttemptId = null;
   let lastCompletionResult = null;
+  let currentBalance = 0;
+  let selectedWatchMinutes = 5;
+  let watchCountdownInterval = null;
 
   const STAGE_INFO = {
     round: {
@@ -46,7 +50,7 @@
   const submitBtn = document.getElementById('submitBtn');
 
   function show(id){
-    ['screen-select','screen-stage-pick','screen-game','screen-celebrate'].forEach(s=>{
+    ['screen-select','screen-stage-pick','screen-game','screen-celebrate','screen-watch-pick','screen-watch-play'].forEach(s=>{
       document.getElementById(s).classList.toggle('hidden', s !== id);
     });
   }
@@ -61,8 +65,12 @@
     if(!myChildId) return;
     try{
       const data = await api.get(`/api/rewards/child/${myChildId}`);
-      document.getElementById('pouchMinutesHeader').textContent = data.unredeemedMinutes;
-      document.getElementById('pouchMinutes').textContent = data.unredeemedMinutes;
+      currentBalance = data.unredeemedMinutes;
+      document.getElementById('pouchMinutesHeader').textContent = currentBalance;
+      document.getElementById('pouchMinutes').textContent = currentBalance;
+      const watchBtn = document.getElementById('watchVideoBtn');
+      document.getElementById('watchVideoBalance').textContent = currentBalance;
+      watchBtn.classList.toggle('hidden', currentBalance < 5);
     }catch(e){ /* non-fatal */ }
   }
 
@@ -73,6 +81,138 @@
       void el.offsetWidth; // restart animation
       el.classList.add('pouch-pop');
     });
+  }
+
+  function escapeHtml(str){
+    return String(str).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+
+  // ---------- Watch a video ----------
+  async function openWatchPick(){
+    show('screen-watch-pick');
+    const errorEl = document.getElementById('watchPickError');
+    const durationList = document.getElementById('watchDurationList');
+    const videoList = document.getElementById('watchVideoList');
+    errorEl.textContent = '';
+    document.getElementById('watchPickBalance').textContent = currentBalance;
+
+    document.getElementById('searchWrap').classList.toggle('hidden', !videoSearchEnabled);
+    document.getElementById('searchInput').value = '';
+    document.getElementById('searchResults').innerHTML = '';
+
+    selectedWatchMinutes = Math.min(5, currentBalance) || 5;
+    durationList.innerHTML = '';
+    for(let m = 5; m <= currentBalance; m += 5){
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'stage-btn' + (m === selectedWatchMinutes ? ' selected' : '');
+      btn.innerHTML = `<p class="stage-title">${m} minutes</p>`;
+      btn.addEventListener('click', () => {
+        selectedWatchMinutes = m;
+        Array.from(durationList.children).forEach(c => c.classList.remove('selected'));
+        btn.classList.add('selected');
+      });
+      durationList.appendChild(btn);
+    }
+
+    videoList.innerHTML = '<p class="form-note">Loading videos…</p>';
+    try{
+      const data = await api.get('/api/videos/kid');
+      if(data.videos.length === 0){
+        videoList.innerHTML = '<p class="form-note">No approved videos yet — ask a grown-up to add some!</p>';
+        return;
+      }
+      videoList.innerHTML = '';
+      data.videos.forEach(v => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'stage-btn';
+        btn.innerHTML = `<p class="stage-title">🎬 ${escapeHtml(v.title)}</p>`;
+        btn.addEventListener('click', () => startWatching({ videoId: v.id }, v.youtube_video_id));
+        videoList.appendChild(btn);
+      });
+    }catch(err){
+      videoList.innerHTML = '';
+      errorEl.textContent = err.message;
+    }
+  }
+
+  async function runVideoSearch(){
+    const errorEl = document.getElementById('watchPickError');
+    const resultsEl = document.getElementById('searchResults');
+    const query = document.getElementById('searchInput').value.trim();
+    if(!query) return;
+    errorEl.textContent = '';
+    resultsEl.innerHTML = '<p class="form-note">Searching…</p>';
+    try{
+      const data = await api.get(`/api/videos/search?q=${encodeURIComponent(query)}`);
+      if(data.results.length === 0){
+        resultsEl.innerHTML = '<p class="form-note">No results — try a different search.</p>';
+        return;
+      }
+      resultsEl.innerHTML = '';
+      data.results.forEach(r => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'video-result-btn';
+        btn.innerHTML = `
+          ${r.thumbnailUrl ? `<img src="${r.thumbnailUrl}" alt="">` : ''}
+          <span class="video-result-title">${escapeHtml(r.title)}</span>
+        `;
+        btn.addEventListener('click', () => startWatching(
+          { searchYoutubeId: r.youtubeVideoId, searchTitle: r.title },
+          r.youtubeVideoId
+        ));
+        resultsEl.appendChild(btn);
+      });
+    }catch(err){
+      resultsEl.innerHTML = '';
+      errorEl.textContent = err.message;
+    }
+  }
+
+  async function startWatching(redeemParams, youtubeVideoId){
+    const errorEl = document.getElementById('watchPickError');
+    errorEl.textContent = '';
+    try{
+      await api.post(`/api/rewards/child/${myChildId}/redeem-for-watch`, { minutes: selectedWatchMinutes, ...redeemParams });
+    }catch(err){
+      errorEl.textContent = err.message;
+      return;
+    }
+    await refreshPouch();
+
+    const iframe = document.getElementById('watchIframe');
+    iframe.src = `https://www.youtube-nocookie.com/embed/${youtubeVideoId}?autoplay=1&rel=0&modestbranding=1`;
+    show('screen-watch-play');
+    startWatchCountdown(selectedWatchMinutes * 60);
+  }
+
+  function startWatchCountdown(totalSeconds){
+    let remaining = totalSeconds;
+    const countdownEl = document.getElementById('watchCountdown');
+    const render = () => {
+      const m = Math.floor(remaining / 60);
+      const s = remaining % 60;
+      countdownEl.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+    };
+    render();
+    clearInterval(watchCountdownInterval);
+    watchCountdownInterval = setInterval(() => {
+      remaining -= 1;
+      render();
+      if(remaining <= 0){
+        stopWatching();
+      }
+    }, 1000);
+  }
+
+  function stopWatching(){
+    clearInterval(watchCountdownInterval);
+    document.getElementById('watchIframe').src = '';
+    goHome();
   }
 
   // ---------- Stage picker ----------
@@ -607,6 +747,7 @@
     try{
       const session = await api.get('/api/auth/child/session');
       myChildId = session.childId;
+      videoSearchEnabled = session.videoSearchEnabled;
     }catch(err){
       window.location.href = '/play/index.html';
       return;
@@ -621,6 +762,13 @@
     document.getElementById('changeQuestBtn').addEventListener('click', goHome);
     document.getElementById('submitBtn').addEventListener('click', submitAnswer);
     document.getElementById('keepSailingBtn').addEventListener('click', nextRound);
+    document.getElementById('watchVideoBtn').addEventListener('click', openWatchPick);
+    document.getElementById('backFromWatchPickBtn').addEventListener('click', goHome);
+    document.getElementById('stopWatchingBtn').addEventListener('click', stopWatching);
+    document.getElementById('searchBtn').addEventListener('click', runVideoSearch);
+    document.getElementById('searchInput').addEventListener('keydown', (e) => {
+      if(e.key === 'Enter'){ e.preventDefault(); runVideoSearch(); }
+    });
     document.getElementById('logoutBtn').addEventListener('click', async () => {
       await api.post('/api/auth/child/logout');
       window.location.href = '/play/index.html';

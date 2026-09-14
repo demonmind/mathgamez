@@ -57,8 +57,19 @@ router.post('/logout', requireChild, (req, res, next) => {
   });
 });
 
-router.get('/session', requireChild, (req, res) => {
-  res.json({ childId: req.session.childId });
+router.get('/session', requireChild, async (req, res, next) => {
+  try {
+    const familyResult = await pool.query(
+      'SELECT (youtube_api_key IS NOT NULL) AS video_search_enabled FROM families WHERE id = $1',
+      [req.session.familyId]
+    );
+    res.json({
+      childId: req.session.childId,
+      videoSearchEnabled: familyResult.rows[0] ? familyResult.rows[0].video_search_enabled : false,
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

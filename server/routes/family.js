@@ -6,6 +6,7 @@ const {
   isValidDisplayName,
   isValidAvatarEmoji,
   isValidPin,
+  isValidApiKey,
   AVATAR_EMOJI_ALLOWLIST,
 } = require('../lib/validate');
 
@@ -17,7 +18,8 @@ router.get('/me', requireParent, async (req, res, next) => {
     const familyId = req.session.familyId;
 
     const familyResult = await pool.query(
-      'SELECT id, family_code, created_at FROM families WHERE id = $1',
+      `SELECT id, family_code, created_at, (youtube_api_key IS NOT NULL) AS video_search_enabled
+       FROM families WHERE id = $1`,
       [familyId]
     );
     if (familyResult.rows.length === 0) {
@@ -124,6 +126,29 @@ router.patch('/children/:id', requireParent, async (req, res, next) => {
     }
 
     res.json(result.rows[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Sets or clears the family's YouTube API key - presence of a key IS the
+// "video search enabled" flag. The key is write-only from the client's
+// perspective: it's never sent back in any GET response.
+router.patch('/settings', requireParent, async (req, res, next) => {
+  try {
+    const { youtubeApiKey } = req.body || {};
+
+    if (youtubeApiKey === null || youtubeApiKey === '') {
+      await pool.query('UPDATE families SET youtube_api_key = NULL WHERE id = $1', [req.session.familyId]);
+      return res.json({ videoSearchEnabled: false });
+    }
+
+    if (!isValidApiKey(youtubeApiKey)) {
+      return res.status(400).json({ error: 'That doesn\'t look like a valid API key' });
+    }
+
+    await pool.query('UPDATE families SET youtube_api_key = $1 WHERE id = $2', [youtubeApiKey.trim(), req.session.familyId]);
+    res.json({ videoSearchEnabled: true });
   } catch (err) {
     next(err);
   }

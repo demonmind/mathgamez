@@ -37,9 +37,31 @@ const childPinIpLimiter = rateLimit({
   message: { error: 'Too many attempts, please wait a few minutes and try again' },
 });
 
+// Tighter than the parent limiter - this account can see/delete every
+// family on the instance, so it's a higher-value target for brute force.
+const adminLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts, please try again later' },
+});
+
+// Protects a family's YouTube API quota (and the free tier's daily cap)
+// from being burned through by rapid-fire searches.
+const videoSearchLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many searches, please wait a bit and try again' },
+});
+
 module.exports = {
   parentLoginLimiter,
   parentSignupLimiter,
   childPinLimiter,
   childPinIpLimiter,
+  adminLoginLimiter,
+  videoSearchLimiter,
 };

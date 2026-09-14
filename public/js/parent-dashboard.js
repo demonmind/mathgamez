@@ -30,6 +30,14 @@ async function loadDashboard() {
 
   renderAvatarPicker();
   renderChildren();
+  updateSearchStatus();
+}
+
+function updateSearchStatus() {
+  const noteEl = document.getElementById('searchStatusNote');
+  noteEl.textContent = familyState.family.video_search_enabled
+    ? '🔍 Video search is ON for your family.'
+    : '🔒 Video search is OFF - your kid can only watch videos from the approved list above.';
 }
 
 function renderAvatarPicker() {
@@ -108,7 +116,11 @@ async function loadChildRewards(childId, card) {
           <td>${formatDate(h.created_at)}</td>
           <td>${h.game_mode ? MODE_LABELS[h.game_mode] : '—'}${h.stage ? ` (Stage ${h.stage})` : ''}</td>
           <td>${h.minutes} min</td>
-          <td class="${h.redeemed ? 'redeemed-badge' : 'unredeemed-badge'}">${h.redeemed ? 'Redeemed' : 'Unredeemed'}</td>
+          <td class="${h.redeemed ? 'redeemed-badge' : 'unredeemed-badge'}">${
+            h.redeemed
+              ? (h.watched_video_title ? `Watched: ${escapeHtml(h.watched_video_title)}` : 'Redeemed')
+              : 'Unredeemed'
+          }</td>
         </tr>
       `).join('');
       historyEl.innerHTML = `
@@ -121,8 +133,28 @@ async function loadChildRewards(childId, card) {
   }
 }
 
+async function loadVideos() {
+  const listEl = document.getElementById('videosList');
+  try {
+    const data = await api.get('/api/videos');
+    if (data.videos.length === 0) {
+      listEl.innerHTML = '<p class="form-note">No approved videos yet.</p>';
+      return;
+    }
+    listEl.innerHTML = data.videos.map((v) => `
+      <div class="entity-row" data-video-id="${v.id}">
+        <span class="label">🎬 ${escapeHtml(v.title)}</span>
+        <button type="button" class="danger-btn" data-action="deleteVideo">Delete</button>
+      </div>
+    `).join('');
+  } catch (err) {
+    listEl.innerHTML = `<p class="form-error">${escapeHtml(err.message)}</p>`;
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   loadDashboard();
+  loadVideos();
 
   document.getElementById('logoutBtn').addEventListener('click', async () => {
     await api.post('/api/auth/parent/logout');
@@ -177,5 +209,55 @@ document.addEventListener('DOMContentLoaded', () => {
         errorEl.textContent = err.message;
       }
     }
+  });
+
+  document.getElementById('addVideoForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorEl = document.getElementById('addVideoError');
+    errorEl.textContent = '';
+
+    const url = document.getElementById('videoUrl').value;
+    const title = document.getElementById('videoTitle').value;
+
+    try {
+      await api.post('/api/videos', { url, title });
+      document.getElementById('addVideoForm').reset();
+      await loadVideos();
+    } catch (err) {
+      errorEl.textContent = err.message;
+    }
+  });
+
+  document.getElementById('videosList').addEventListener('click', async (e) => {
+    if (e.target.dataset.action !== 'deleteVideo') return;
+    const row = e.target.closest('[data-video-id]');
+    if (!confirm('Remove this video? Kids will no longer be able to watch it.')) return;
+    await api.del(`/api/videos/${row.dataset.videoId}`).catch((err) => alert(err.message));
+    await loadVideos();
+  });
+
+  document.getElementById('searchSettingsForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorEl = document.getElementById('searchSettingsError');
+    errorEl.textContent = '';
+    const youtubeApiKey = document.getElementById('youtubeApiKey').value;
+    if (!youtubeApiKey) {
+      errorEl.textContent = 'Please paste an API key';
+      return;
+    }
+    try {
+      await api.patch('/api/family/settings', { youtubeApiKey });
+      document.getElementById('searchSettingsForm').reset();
+      await loadDashboard();
+    } catch (err) {
+      errorEl.textContent = err.message;
+    }
+  });
+
+  document.getElementById('disableSearchBtn').addEventListener('click', async () => {
+    if (!confirm('Turn off video search for your family?')) return;
+    await api.patch('/api/family/settings', { youtubeApiKey: '' }).catch((err) => alert(err.message));
+    document.getElementById('searchSettingsForm').reset();
+    await loadDashboard();
   });
 });

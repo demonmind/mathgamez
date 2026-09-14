@@ -10,6 +10,11 @@ function requireChild(req, res, next) {
   return res.status(401).json({ error: 'Child login required' });
 }
 
+function requireAdmin(req, res, next) {
+  if (req.session && req.session.role === 'admin') return next();
+  return res.status(401).json({ error: 'Admin login required' });
+}
+
 // GET /api/rewards/child/:id is readable by the child themself, or by a
 // parent in the same family as that child (re-derived from the DB, never
 // trusted from the session/client alone).
@@ -40,4 +45,4 @@ async function requireChildOrOwningParent(req, res, next) {
   return res.status(401).json({ error: 'Not authorized for this child' });
 }
 
-module.exports = { requireParent, requireChild, requireChildOrOwningParent };
+module.exports = { requireParent, requireChild, requireAdmin, requireChildOrOwningParent };

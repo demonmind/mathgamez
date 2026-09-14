@@ -24,16 +24,22 @@
     </div>
 
     <!-- MODE SELECT -->
-    <div id="screen-select" class="modes">
-      <button class="mode-btn round" data-mode="round">
-        <span class="mode-icon">🧭</span>
-        <p class="mode-title">Round Up Cove</p>
-        <p class="mode-desc">Round numbers to the nearest 10 or 100 — 3 stages, gets tougher!</p>
-      </button>
-      <button class="mode-btn addsub" data-mode="addsub">
-        <span class="mode-icon">🗺️</span>
-        <p class="mode-title">Treasure Math</p>
-        <p class="mode-desc">Add and subtract three numbers — 3-digit and challenge stages ahead!</p>
+    <div id="screen-select">
+      <div class="modes">
+        <button class="mode-btn round" data-mode="round">
+          <span class="mode-icon">🧭</span>
+          <p class="mode-title">Round Up Cove</p>
+          <p class="mode-desc">Round numbers to the nearest 10 or 100 — 3 stages, gets tougher!</p>
+        </button>
+        <button class="mode-btn addsub" data-mode="addsub">
+          <span class="mode-icon">🗺️</span>
+          <p class="mode-title">Treasure Math</p>
+          <p class="mode-desc">Add and subtract three numbers — 3-digit and challenge stages ahead!</p>
+        </button>
+      </div>
+      <button type="button" class="stage-btn watch-video-btn hidden" id="watchVideoBtn">
+        <p class="stage-title">🎬 Watch a Video</p>
+        <p class="stage-desc">Spend your <span id="watchVideoBalance">0</span> treasure minutes on an approved video</p>
       </button>
     </div>
 
@@ -41,6 +47,37 @@
     <div id="screen-stage-pick" class="hidden">
       <button class="back-btn" id="backToModesBtn" style="margin-bottom:16px;">← Change quest</button>
       <div class="stage-list" id="stageList"></div>
+    </div>
+
+    <!-- WATCH-A-VIDEO: duration + video picker -->
+    <div id="screen-watch-pick" class="hidden">
+      <button class="back-btn" id="backFromWatchPickBtn" style="margin-bottom:16px;">← Change quest</button>
+      <p class="q-label">You have 🪙 <span id="watchPickBalance">0</span> treasure minutes. Watch for how long?</p>
+      <div class="stage-list" id="watchDurationList"></div>
+      <p class="q-label" style="margin-top:18px;">Pick a video:</p>
+      <div class="stage-list" id="watchVideoList"></div>
+
+      <div id="searchWrap" class="hidden">
+        <p class="q-label" style="margin-top:18px;">Or search for a video:</p>
+        <div class="answer-row">
+          <input type="text" id="searchInput" class="answer-input" style="width:100%; text-align:left; font-size:16px;" placeholder="Search YouTube…" maxlength="100">
+          <button type="button" class="submit-btn" id="searchBtn">🔍</button>
+        </div>
+        <div class="video-search-results" id="searchResults"></div>
+      </div>
+
+      <p class="form-error" id="watchPickError"></p>
+    </div>
+
+    <!-- WATCH-A-VIDEO: playback -->
+    <div id="screen-watch-play" class="hidden">
+      <div class="topbar">
+        <span class="pill">⏳ <span id="watchCountdown">5:00</span></span>
+        <button class="back-btn" id="stopWatchingBtn">Done Watching</button>
+      </div>
+      <div class="video-frame-wrap">
+        <iframe id="watchIframe" src="" title="Approved video" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+      </div>
     </div>
 
     <!-- GAME SCREEN -->
