@@ -1,4 +1,9 @@
 :root{
+  /* Without this, some browsers render native form controls (textareas,
+     scrollbars, the resize handle) using their OS light-theme default
+     regardless of our own background/color rules, even with an explicit
+     inline style - this is what caused the white textarea. */
+  color-scheme: dark;
   --deep-sea: #0B4F6C;
   --sea-foam: #8ECAE6;
   --sand: #F4A261;
@@ -135,13 +140,14 @@ h1 span{ color: var(--sand); }
 /* ---------- Form fields (parent pages, kid family-code entry) ---------- */
 .field{ margin-bottom:16px; }
 .field label{ display:block; font-size:13px; color: var(--sea-foam); margin-bottom:6px; }
-.field input, .field select{
+.field input, .field select, .field textarea{
   width:100%; font-family:inherit; font-size:16px;
   padding: 12px 14px; border-radius:12px;
   border: 2px solid rgba(255,255,255,0.2);
   background: rgba(0,0,0,0.2); color: var(--parchment);
 }
-.field input:focus, .field select:focus{ outline:none; border-color: var(--gold); }
+.field textarea{ resize:vertical; min-height:70px; }
+.field input:focus, .field select:focus, .field textarea:focus{ outline:none; border-color: var(--gold); }
 .form-error{ color: var(--coral); font-size:14px; min-height:20px; margin:0 0 10px; }
 .form-note{ color: var(--sea-foam); font-size:13px; margin:0 0 16px; }
 .link-row{ text-align:center; margin-top:16px; font-size:14px; }

@@ -37,6 +37,12 @@ async function callChatCompletion(messages) {
         model: config.llmModel,
         messages,
         temperature: 0.2,
+        // Some Qwen3 builds default to an internal "thinking" pass before
+        // answering, which can run to 1000+ tokens and take well over a
+        // minute on an ambiguous/off-topic prompt - we only want the final
+        // JSON, not a reasoning trace, so turn it off. Harmless no-op on
+        // servers/models that don't recognize this field.
+        ...(config.llmDisableThinking ? { chat_template_kwargs: { enable_thinking: false } } : {}),
       }),
       signal: controller.signal,
     });

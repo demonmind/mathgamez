@@ -108,7 +108,7 @@ function renderChildren() {
         </div>
         <div class="field">
           <label>What does your child struggle with?</label>
-          <textarea data-role="planNotes" rows="3" maxlength="2000" style="width:100%; font-family:inherit; padding:10px; border-radius:12px; border:2px solid rgba(255,255,255,0.2); background:rgba(0,0,0,0.2); color:var(--parchment);"></textarea>
+          <textarea data-role="planNotes" rows="3" maxlength="2000"></textarea>
         </div>
         <div class="field">
           <label>Upload a document (optional - report card, teacher note, worksheet photo)</label>

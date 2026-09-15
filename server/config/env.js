@@ -32,6 +32,10 @@ const config = {
   llmVisionCapable: process.env.LLM_VISION_CAPABLE !== 'false',
   llmApiKey: process.env.LLM_API_KEY || null,
   llmTimeoutMs: parseInt(process.env.LLM_TIMEOUT_MS, 10) || 90 * 1000,
+  // Suppresses Qwen3-style "thinking" mode (see server/lib/llm.js) - set to
+  // false if a future model/server errors on the extra field instead of
+  // ignoring it.
+  llmDisableThinking: process.env.LLM_DISABLE_THINKING !== 'false',
   // How many completed stage attempts a child needs (since their last
   // learning plan update) before the background job re-runs the LLM to
   // re-calibrate their plan based on actual performance.
