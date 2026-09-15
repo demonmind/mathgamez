@@ -109,6 +109,34 @@ function isValidWatchMinutes(value) {
   return Number.isInteger(n) && n > 0 && n % 5 === 0;
 }
 
+const GRADE_ALLOWLIST = ['Pre-K', 'K', '1st', '2nd', '3rd', '4th', '5th', '6th+'];
+
+function isValidGrade(value) {
+  return GRADE_ALLOWLIST.includes(value);
+}
+
+function isValidLearningPlanNotes(value) {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  return trimmed.length >= 1 && trimmed.length <= 2000 && !hasControlChar(trimmed);
+}
+
+// Strictly validates the LLM's JSON output against the exact schema given
+// in the system prompt - never trust model output shape, since this feeds
+// directly into what math problems get generated for a child.
+function isValidLearningPlanProfile(value) {
+  if (!value || typeof value !== 'object') return false;
+  if (!['round', 'addsub', 'both'].includes(value.recommendedMode)) return false;
+  if (![1, 2, 3].includes(value.recommendedStartingStage)) return false;
+  if (typeof value.subtractionEmphasis !== 'number' ||
+      value.subtractionEmphasis < 0 || value.subtractionEmphasis > 1) return false;
+  if (typeof value.extraWordProblems !== 'boolean') return false;
+  if (!['smaller', 'standard', 'larger'].includes(value.numberRangeAdjustment)) return false;
+  if (typeof value.focusSummary !== 'string' ||
+      value.focusSummary.length < 1 || value.focusSummary.length > 500) return false;
+  return true;
+}
+
 module.exports = {
   AVATAR_EMOJI_ALLOWLIST,
   isValidEmail,
@@ -124,4 +152,8 @@ module.exports = {
   isValidSearchQuery,
   isValidVideoTitle,
   isValidWatchMinutes,
+  GRADE_ALLOWLIST,
+  isValidGrade,
+  isValidLearningPlanNotes,
+  isValidLearningPlanProfile,
 };

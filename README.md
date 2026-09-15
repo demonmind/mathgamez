@@ -150,13 +150,17 @@ Cloudflare caches static file extensions (`.js`, `.css`, etc.) at its edge
 *and* tells browsers to cache them, using its own default Browser Cache TTL
 (commonly 4 hours) - **regardless of what this app's origin sends** (Express
 already sends `Cache-Control: max-age=0`, i.e. "always revalidate," but
-Cloudflare overrides it for these file types on most plans). Practically:
-after you redeploy changed `public/js/*` or `public/css/*` files, visitors
-who already loaded the app may keep running the old JS/CSS for up to that
-TTL. After a deploy that touches frontend files, either purge Cloudflare's
-cache for the domain (dashboard: Caching → Configuration → Purge Cache, or
-the `/zones/:id/purge_cache` API), or add a Cache Rule for the hostname to
-bypass/respect-origin caching for `/js/*` and `/css/*`.
+Cloudflare overrides it for these file types on most plans).
+
+To work around this without needing to touch Cloudflare's dashboard, every
+`<script src>`/`<link rel=stylesheet>` in `public/**/*.html` is suffixed
+with a version query string (`?v=1`) - Cloudflare and browsers cache each
+`?v=N` URL independently, so bumping that number is enough to force
+everyone to fetch the new file immediately, without waiting out the TTL or
+purging anything. **After any deploy that changes a file under
+`public/js/` or `public/css/`, bump the `?v=N` value** (a single
+find-and-replace across `public/**/*.html` is enough - grep for `?v=1` to
+find every occurrence).
 
 ## Security notes
 

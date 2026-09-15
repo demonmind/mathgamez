@@ -15,6 +15,7 @@
 
   let myChildId = null;
   let videoSearchEnabled = false;
+  let learningPlan = null; // tuning knobs from an AI-generated plan, or null
   let currentAttemptId = null;
   let lastCompletionResult = null;
   let currentBalance = 0;
@@ -225,11 +226,13 @@
       const data = await api.get(`/api/game/progress?mode=${m}`);
       const available = data.availableStage;
       stageList.innerHTML = '';
+      const suggested = learningPlan && learningPlan.recommendedStartingStage;
       for(let s = 1; s <= available; s++){
         const btn = document.createElement('button');
         btn.className = 'stage-btn';
+        const badge = s === suggested ? ' <span class="suggested-badge">✨ Suggested</span>' : '';
         btn.innerHTML = `
-          <p class="stage-title">Stage ${s}${s === MAX_STAGE ? ' (GATE)' : ''}</p>
+          <p class="stage-title">Stage ${s}${s === MAX_STAGE ? ' (GATE)' : ''}${badge}</p>
           <p class="stage-desc">${STAGE_INFO[m][s]}</p>
         `;
         btn.addEventListener('click', () => startGame(m, s));
@@ -283,6 +286,28 @@
     return Math.floor(Math.random() * (max - min + 1)) + min;
   }
 
+  // Shrinks or grows a number range per the AI learning plan's
+  // numberRangeAdjustment, if any - bounded so it can never push a range
+  // past 3 digits (the column-math table always assumes ones/tens/hundreds).
+  function adjustRange(min, max){
+    const adj = learningPlan && learningPlan.numberRangeAdjustment;
+    if(adj === 'smaller'){
+      return [min, Math.max(min + 5, Math.round(min + (max - min) * 0.6))];
+    }
+    if(adj === 'larger'){
+      return [min, Math.min(998, Math.round(min + (max - min) * 1.3))];
+    }
+    return [min, max];
+  }
+
+  function addProbability(){
+    return learningPlan ? Math.max(0, Math.min(1, 1 - learningPlan.subtractionEmphasis)) : 0.6;
+  }
+
+  function wordProblemProbability(){
+    return learningPlan && learningPlan.extraWordProblems ? 0.75 : 0.5;
+  }
+
   function roundTo(num, place){
     return Math.round(num / place) * place;
   }
@@ -295,9 +320,11 @@
     const place = Math.random() < 0.5 ? 10 : 100;
     let num;
     if(place === 10){
-      num = use3Digit ? randInt(101, 998) : randInt(11, 98);
+      const [lo, hi] = use3Digit ? adjustRange(101, 998) : adjustRange(11, 98);
+      num = randInt(lo, hi);
     } else {
-      num = randInt(105, 985);
+      const [lo, hi] = adjustRange(105, 985);
+      num = randInt(lo, hi);
       // avoid exact multiples of 100 so it stays interesting
       if(num % 100 === 0) num += 5;
     }
@@ -318,8 +345,9 @@
       [options[i], options[j]] = [options[j], options[i]];
     }
 
-    // Stage 3 (GATE tier): about half the questions become word problems.
-    const isWord = stage === MAX_STAGE && Math.random() < 0.5;
+    // Stage 3 (GATE tier): about half the questions become word problems
+    // (more, if the AI learning plan calls for extra word-problem practice).
+    const isWord = stage === MAX_STAGE && Math.random() < wordProblemProbability();
 
     current = { num, place, correct, options };
     qLabelEl.textContent = isWord ? pickRoundingWordProblem(num, place) : `Round to the nearest ${place}:`;
@@ -348,17 +376,17 @@
   function makeAddSubQuestion(){
     if(stage === 1){
       // Stage 1: friendly 2-digit warm-up
-      const q = generateAddSubNumbers(10, 99);
+      const q = generateAddSubNumbers(...adjustRange(10, 99));
       buildStraightAddSub(q, straightLabel(q.isAdd), straightHint(q.isAdd));
     } else if(stage === 2){
       // Stage 2: always 3-digit, so regrouping across two columns is common
-      const q = generateAddSubNumbers(100, 300);
+      const q = generateAddSubNumbers(...adjustRange(100, 300));
       buildStraightAddSub(q, straightLabel(q.isAdd), 'Three digits now — watch for regrouping across two columns!');
     } else {
       // Stage 3 (GATE tier): mix real-world word problems with
       // missing-number puzzles that need inverse-operation thinking
-      if(Math.random() < 0.5){
-        const q = generateAddSubNumbers(100, 300);
+      if(Math.random() < wordProblemProbability()){
+        const q = generateAddSubNumbers(...adjustRange(100, 300));
         buildStraightAddSub(q, pickAddSubWordProblem(q), straightHint(q.isAdd));
       } else {
         makeMissingNumberQuestion();
@@ -369,7 +397,9 @@
   // Picks three numbers and works out whether this is an addition or
   // subtraction problem, keeping subtraction non-negative and friendly.
   function generateAddSubNumbers(min, max){
-    const isAdd = Math.random() < 0.6; // slightly favor addition early
+    // Favors addition early by default; an AI learning plan can shift this
+    // via subtractionEmphasis (see addProbability()).
+    const isAdd = Math.random() < addProbability();
     let a = randInt(min, max);
     let b = randInt(min, max);
     let c = randInt(min, max);
@@ -754,6 +784,15 @@
     }
 
     refreshPouch();
+
+    try{
+      const planData = await api.get('/api/game/learning-plan');
+      learningPlan = planData.profile;
+      if(learningPlan && learningPlan.recommendedMode && learningPlan.recommendedMode !== 'both'){
+        const card = document.querySelector(`.mode-btn[data-mode="${learningPlan.recommendedMode}"]`);
+        if(card) card.insertAdjacentHTML('beforeend', '<p class="suggested-badge">✨ Suggested for you</p>');
+      }
+    }catch(err){ /* no plan yet, or fetch failed - just play normally */ }
 
     document.querySelectorAll('.mode-btn').forEach(btn => {
       btn.addEventListener('click', () => openStagePicker(btn.dataset.mode));

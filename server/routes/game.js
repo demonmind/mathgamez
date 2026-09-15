@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db/pool');
 const { requireChild } = require('../middleware/auth');
 const { isValidGameMode, isValidStage } = require('../lib/validate');
+const { maybeAutoRecalibrate } = require('../lib/learningPlanAuto');
 
 const router = express.Router();
 const MAX_STAGE = 3;
@@ -131,11 +132,39 @@ router.post('/attempts/:id/complete', requireChild, async (req, res, next) => {
       rewardEarned: passed,
       minutesEarned: passed ? REWARD_MINUTES : 0,
     });
+
+    // Fire-and-forget: never let a ~30s LLM call delay the kid's response.
+    // No-ops unless this child already has a plan, opted into auto-adapt,
+    // and has enough new completed attempts since the last update.
+    maybeAutoRecalibrate(req.session.childId).catch(() => {});
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);
   } finally {
     client.release();
+  }
+});
+
+// Kid-facing: only the tuning knobs the game generators actually use.
+// focusSummary is phrased as advice to the parent and isn't needed here;
+// the parent's raw notes/document stay parent-only (server/routes/family.js).
+router.get('/learning-plan', requireChild, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT profile FROM learning_plans WHERE child_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [req.session.childId]
+    );
+    const profile = result.rows[0] ? result.rows[0].profile : null;
+    const tunables = profile && {
+      recommendedMode: profile.recommendedMode,
+      recommendedStartingStage: profile.recommendedStartingStage,
+      subtractionEmphasis: profile.subtractionEmphasis,
+      extraWordProblems: profile.extraWordProblems,
+      numberRangeAdjustment: profile.numberRangeAdjustment,
+    };
+    res.json({ profile: tunables });
+  } catch (err) {
+    next(err);
   }
 });
 

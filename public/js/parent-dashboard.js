@@ -92,10 +92,68 @@ function renderChildren() {
         <p class="form-error" data-role="editError"></p>
         <button type="button" class="submit-btn" data-action="saveEdit">Save Changes</button>
       </details>
+
+      <details style="margin-top:12px;">
+        <summary style="cursor:pointer; color: var(--sea-foam);">AI Learning Plan</summary>
+        <div data-role="planCurrent" style="margin:10px 0;"></div>
+        <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin:10px 0;">
+          <input type="checkbox" data-role="autoAdaptToggle" data-action="toggleAutoAdapt" ${child.auto_adapt_enabled ? 'checked' : ''}>
+          Automatically adjust this plan based on how they're doing (checks in every few completed stages)
+        </label>
+        <div class="field" style="margin-top:10px;">
+          <label>Grade</label>
+          <select data-role="planGrade">
+            ${GRADE_OPTIONS.map((g) => `<option value="${g}">${g}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label>What does your child struggle with?</label>
+          <textarea data-role="planNotes" rows="3" maxlength="2000" style="width:100%; font-family:inherit; padding:10px; border-radius:12px; border:2px solid rgba(255,255,255,0.2); background:rgba(0,0,0,0.2); color:var(--parchment);"></textarea>
+        </div>
+        <div class="field">
+          <label>Upload a document (optional - report card, teacher note, worksheet photo)</label>
+          <input type="file" data-role="planDocument" accept=".txt,.pdf,image/jpeg,image/png,image/webp">
+        </div>
+        <p class="form-note">This runs a locally-hosted AI model to suggest which stages/skills to emphasize - it never writes or grades any math itself. Can take up to a minute.</p>
+        <p class="form-error" data-role="planError"></p>
+        <button type="button" class="submit-btn" data-action="generatePlan">Generate Plan</button>
+      </details>
     `;
     list.appendChild(card);
     loadChildRewards(child.id, card);
+    loadLearningPlan(child.id, card);
   });
+}
+
+const GRADE_OPTIONS = ['Pre-K', 'K', '1st', '2nd', '3rd', '4th', '5th', '6th+'];
+
+function renderPlanSummary(el, plan) {
+  if (!plan) {
+    el.innerHTML = '<p class="form-note">No plan generated yet.</p>';
+    return;
+  }
+  const p = plan.profile;
+  const autoBadge = plan.generated_by === 'auto'
+    ? '<span class="suggested-badge" style="margin-left:6px;">🤖 Auto-adjusted</span>' : '';
+  const trigger = plan.generated_by === 'auto' && plan.trigger_summary
+    ? `<details style="margin-top:4px;"><summary style="cursor:pointer; font-size:12px; color: var(--sea-foam);">Why it changed</summary><pre class="form-note" style="white-space:pre-wrap; font-family:inherit;">${escapeHtml(plan.trigger_summary)}</pre></details>`
+    : '';
+  el.innerHTML = `
+    <p class="form-note" style="color: var(--gold);">Latest plan (${formatDate(plan.created_at)}, grade ${escapeHtml(plan.grade)})${autoBadge}:</p>
+    <p class="form-note">${escapeHtml(p.focusSummary)}</p>
+    <p class="form-note">Mode: ${escapeHtml(p.recommendedMode)} · Suggested stage: ${p.recommendedStartingStage} · Range: ${escapeHtml(p.numberRangeAdjustment)}</p>
+    ${trigger}
+  `;
+}
+
+async function loadLearningPlan(childId, card) {
+  const el = card.querySelector('[data-role="planCurrent"]');
+  try {
+    const data = await api.get(`/api/family/children/${childId}/learning-plan`);
+    renderPlanSummary(el, data.plan);
+  } catch (err) {
+    el.innerHTML = '<p class="form-note">Could not load plan.</p>';
+  }
 }
 
 async function loadChildRewards(childId, card) {
@@ -184,6 +242,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  document.getElementById('childrenList').addEventListener('change', async (e) => {
+    if (e.target.dataset.action !== 'toggleAutoAdapt') return;
+    const card = e.target.closest('.child-card');
+    const childId = card.dataset.childId;
+    try {
+      await api.patch(`/api/family/children/${childId}`, { autoAdaptEnabled: e.target.checked });
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      alert(err.message);
+    }
+  });
+
   document.getElementById('childrenList').addEventListener('click', async (e) => {
     const action = e.target.dataset.action;
     if (!action) return;
@@ -207,6 +277,40 @@ document.addEventListener('DOMContentLoaded', () => {
         await loadDashboard();
       } catch (err) {
         errorEl.textContent = err.message;
+      }
+    }
+
+    if (action === 'generatePlan') {
+      const errorEl = card.querySelector('[data-role="planError"]');
+      const grade = card.querySelector('[data-role="planGrade"]').value;
+      const notes = card.querySelector('[data-role="planNotes"]').value;
+      const fileInput = card.querySelector('[data-role="planDocument"]');
+      errorEl.textContent = '';
+
+      if (!notes.trim()) {
+        errorEl.textContent = 'Please describe what your child struggles with';
+        return;
+      }
+
+      const btn = e.target;
+      const originalLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Generating… (can take up to a minute)';
+
+      const formData = new FormData();
+      formData.append('grade', grade);
+      formData.append('notes', notes);
+      if (fileInput.files[0]) formData.append('document', fileInput.files[0]);
+
+      try {
+        await api.postForm(`/api/family/children/${childId}/learning-plan`, formData);
+        await loadLearningPlan(childId, card);
+        fileInput.value = '';
+      } catch (err) {
+        errorEl.textContent = err.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
       }
     }
   });

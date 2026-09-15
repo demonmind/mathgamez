@@ -1,17 +1,41 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
+const multer = require('multer');
 const pool = require('../db/pool');
+const config = require('../config/env');
 const { requireParent } = require('../middleware/auth');
+const { learningPlanLimiter } = require('../middleware/rateLimiters');
+const { processDocument, isSupportedMimeType } = require('../lib/documentText');
+const { generateLearningPlan } = require('../lib/llm');
 const {
   isValidDisplayName,
   isValidAvatarEmoji,
   isValidPin,
   isValidApiKey,
+  isValidGrade,
+  isValidLearningPlanNotes,
   AVATAR_EMOJI_ALLOWLIST,
 } = require('../lib/validate');
 
 const router = express.Router();
 const BCRYPT_ROUNDS = 12;
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+});
+
+function uploadDocument(req, res, next) {
+  upload.single('document')(req, res, (err) => {
+    if (err) {
+      const message = err.code === 'LIMIT_FILE_SIZE'
+        ? 'File is too large (max 8MB)'
+        : 'Could not process the uploaded file';
+      return res.status(400).json({ error: message });
+    }
+    next();
+  });
+}
 
 router.get('/me', requireParent, async (req, res, next) => {
   try {
@@ -31,7 +55,7 @@ router.get('/me', requireParent, async (req, res, next) => {
       [familyId]
     );
     const childrenResult = await pool.query(
-      'SELECT id, display_name, avatar_emoji, created_at FROM children WHERE family_id = $1 ORDER BY created_at',
+      'SELECT id, display_name, avatar_emoji, auto_adapt_enabled, created_at FROM children WHERE family_id = $1 ORDER BY created_at',
       [familyId]
     );
 
@@ -81,7 +105,7 @@ router.patch('/children/:id', requireParent, async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid child id' });
     }
 
-    const { displayName, avatarEmoji, pin } = req.body || {};
+    const { displayName, avatarEmoji, pin, autoAdaptEnabled } = req.body || {};
     const updates = [];
     const values = [];
     let idx = 1;
@@ -108,6 +132,13 @@ router.patch('/children/:id', requireParent, async (req, res, next) => {
       updates.push(`pin_hash = $${idx++}`);
       values.push(pinHash);
     }
+    if (autoAdaptEnabled !== undefined) {
+      if (typeof autoAdaptEnabled !== 'boolean') {
+        return res.status(400).json({ error: 'Invalid value' });
+      }
+      updates.push(`auto_adapt_enabled = $${idx++}`);
+      values.push(autoAdaptEnabled);
+    }
 
     if (updates.length === 0) {
       return res.status(400).json({ error: 'No changes provided' });
@@ -117,7 +148,7 @@ router.patch('/children/:id', requireParent, async (req, res, next) => {
     const result = await pool.query(
       `UPDATE children SET ${updates.join(', ')}
        WHERE id = $${idx++} AND family_id = $${idx}
-       RETURNING id, display_name, avatar_emoji, created_at`,
+       RETURNING id, display_name, avatar_emoji, auto_adapt_enabled, created_at`,
       values
     );
 
@@ -126,6 +157,93 @@ router.patch('/children/:id', requireParent, async (req, res, next) => {
     }
 
     res.json(result.rows[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Runs the local LLM once to produce a small set of tuning knobs for this
+// child's question generation (never actual math questions/answers - see
+// server/lib/llm.js). Accepts an optional document (txt/pdf/image) as
+// extra context. Slow (LLM inference) - the frontend should show a loading
+// state; learningPlanLimiter bounds how often this can be triggered.
+router.post('/children/:id/learning-plan', requireParent, learningPlanLimiter, uploadDocument, async (req, res, next) => {
+  try {
+    const childId = Number(req.params.id);
+    if (!Number.isInteger(childId)) {
+      return res.status(400).json({ error: 'Invalid child id' });
+    }
+
+    const { grade, notes } = req.body || {};
+    if (!isValidGrade(grade)) {
+      return res.status(400).json({ error: 'Please choose a grade' });
+    }
+    if (!isValidLearningPlanNotes(notes)) {
+      return res.status(400).json({ error: 'Please describe what your child struggles with (1-2000 characters)' });
+    }
+
+    const childResult = await pool.query(
+      'SELECT id FROM children WHERE id = $1 AND family_id = $2',
+      [childId, req.session.familyId]
+    );
+    if (childResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Child not found' });
+    }
+
+    let documentExcerpt = null;
+    let documentImage = null;
+    let documentFilename = null;
+
+    if (req.file) {
+      documentFilename = req.file.originalname;
+      if (!isSupportedMimeType(req.file.mimetype)) {
+        return res.status(400).json({ error: 'Unsupported file type - please upload a .txt, .pdf, or image (jpg/png/webp)' });
+      }
+      if (req.file.mimetype.startsWith('image/') && !config.llmVisionCapable) {
+        return res.status(400).json({ error: 'The current AI model can\'t read images - please upload a .txt or .pdf instead, or paste the details into the notes field' });
+      }
+      const processed = await processDocument(req.file);
+      documentExcerpt = processed.excerpt || null;
+      documentImage = processed.image || null;
+    }
+
+    const profile = await generateLearningPlan({ grade, notes, documentExcerpt, documentImage });
+
+    const result = await pool.query(
+      `INSERT INTO learning_plans
+         (child_id, grade, parent_notes, document_filename, document_excerpt, profile, created_by_parent_id, generated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'parent')
+       RETURNING id, grade, parent_notes, document_filename, profile, generated_by, trigger_summary, created_at`,
+      [childId, grade, notes.trim(), documentFilename, documentExcerpt, JSON.stringify(profile), req.session.parentId]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/children/:id/learning-plan', requireParent, async (req, res, next) => {
+  try {
+    const childId = Number(req.params.id);
+    if (!Number.isInteger(childId)) {
+      return res.status(400).json({ error: 'Invalid child id' });
+    }
+
+    const childResult = await pool.query(
+      'SELECT id FROM children WHERE id = $1 AND family_id = $2',
+      [childId, req.session.familyId]
+    );
+    if (childResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Child not found' });
+    }
+
+    const result = await pool.query(
+      `SELECT id, grade, parent_notes, document_filename, profile, generated_by, trigger_summary, created_at
+       FROM learning_plans WHERE child_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [childId]
+    );
+    res.json({ plan: result.rows[0] || null });
   } catch (err) {
     next(err);
   }

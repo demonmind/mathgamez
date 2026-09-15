@@ -57,6 +57,16 @@ const videoSearchLimiter = rateLimit({
   message: { error: 'Too many searches, please wait a bit and try again' },
 });
 
+// LLM generation is slow and compute-heavy (runs on the host's GPU) -
+// bounds how often a parent can trigger it per child.
+const learningPlanLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many plan requests, please wait a bit and try again' },
+});
+
 module.exports = {
   parentLoginLimiter,
   parentSignupLimiter,
@@ -64,4 +74,5 @@ module.exports = {
   childPinIpLimiter,
   adminLoginLimiter,
   videoSearchLimiter,
+  learningPlanLimiter,
 };
