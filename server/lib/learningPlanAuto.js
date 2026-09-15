@@ -1,12 +1,17 @@
 const pool = require('../db/pool');
 const config = require('../config/env');
 const { generateLearningPlan } = require('./llm');
+const { maybeGenerateReadingPassage } = require('./readingPassageAuto');
 
 // Prevents two completions landing close together from triggering two
 // concurrent LLM calls for the same child.
 const inProgress = new Set();
 
-const MODE_LABELS = { round: 'Round Up Cove (rounding)', addsub: 'Treasure Math (addition/subtraction)' };
+const MODE_LABELS = {
+  round: 'Round Up Cove (rounding)',
+  addsub: 'Treasure Math (addition/subtraction)',
+  reading: 'Story Cove (reading comprehension)',
+};
 
 function buildPerformanceSummary(attempts) {
   const groups = new Map();
@@ -70,12 +75,15 @@ async function maybeAutoRecalibrate(childId) {
 
     const profile = await generateLearningPlan({ grade: latestPlan.grade, notes });
 
-    await pool.query(
+    const insertResult = await pool.query(
       `INSERT INTO learning_plans (child_id, grade, parent_notes, profile, generated_by, trigger_summary)
-       VALUES ($1, $2, $3, $4, 'auto', $5)`,
+       VALUES ($1, $2, $3, $4, 'auto', $5)
+       RETURNING id, grade, parent_notes`,
       [childId, latestPlan.grade, latestPlan.parent_notes, JSON.stringify(profile), summary]
     );
     console.log(`Auto-recalibrated learning plan for child ${childId}`);
+
+    maybeGenerateReadingPassage(childId, { ...insertResult.rows[0], profile }).catch(() => {});
   } catch (err) {
     console.error(`Auto-recalibration failed for child ${childId}:`, err.message);
   } finally {

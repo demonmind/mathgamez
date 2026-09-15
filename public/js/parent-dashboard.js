@@ -11,7 +11,7 @@ function formatDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-const MODE_LABELS = { round: 'Round Up Cove', addsub: 'Treasure Math' };
+const MODE_LABELS = { round: 'Round Up Cove', addsub: 'Treasure Math', reading: 'Story Cove' };
 
 async function loadDashboard() {
   try {
@@ -96,6 +96,10 @@ function renderChildren() {
       <details style="margin-top:12px;">
         <summary style="cursor:pointer; color: var(--sea-foam);">AI Learning Plan</summary>
         <div data-role="planCurrent" style="margin:10px 0;"></div>
+        <details style="margin:8px 0;">
+          <summary style="cursor:pointer; font-size:13px; color: var(--sea-foam);">📜 Earlier plans</summary>
+          <div data-role="planHistory" style="margin-top:8px;"></div>
+        </details>
         <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin:10px 0;">
           <input type="checkbox" data-role="autoAdaptToggle" data-action="toggleAutoAdapt" ${child.auto_adapt_enabled ? 'checked' : ''}>
           Automatically adjust this plan based on how they're doing (checks in every few completed stages)
@@ -114,7 +118,7 @@ function renderChildren() {
           <label>Upload a document (optional - report card, teacher note, worksheet photo)</label>
           <input type="file" data-role="planDocument" accept=".txt,.pdf,image/jpeg,image/png,image/webp">
         </div>
-        <p class="form-note">This runs a locally-hosted AI model to suggest which stages/skills to emphasize - it never writes or grades any math itself. Can take up to a minute.</p>
+        <p class="form-note">This runs a locally-hosted AI model to suggest which stages/skills to emphasize - it never writes or grades any math itself. Can take up to a minute. <strong>Generating a new plan replaces the active one</strong> - if you want to cover multiple things, describe them together in one submission, or check "Earlier plans" above afterward to bring back an older one.</p>
         <p class="form-error" data-role="planError"></p>
         <button type="button" class="submit-btn" data-action="generatePlan">Generate Plan</button>
       </details>
@@ -146,13 +150,41 @@ function renderPlanSummary(el, plan) {
   `;
 }
 
+function renderPlanHistory(el, childId, plans) {
+  if (plans.length <= 1) {
+    el.innerHTML = '<p class="form-note">No earlier plans yet.</p>';
+    return;
+  }
+  // Skip the first (current) entry - this is only the earlier ones.
+  const rows = plans.slice(1).map((plan) => {
+    const badge = plan.generated_by === 'auto' ? ' 🤖' : '';
+    return `
+      <div class="entity-row">
+        <span class="label">${formatDate(plan.created_at)} · grade ${escapeHtml(plan.grade)}${badge}<br>
+          <span style="opacity:0.8;">${escapeHtml(plan.parent_notes.slice(0, 100))}${plan.parent_notes.length > 100 ? '…' : ''}</span>
+        </span>
+        <button type="button" class="small-btn" data-action="reuseNotes" data-child-id="${childId}"
+          data-grade="${escapeHtml(plan.grade)}" data-notes="${escapeHtml(plan.parent_notes)}">Use these notes again</button>
+      </div>
+    `;
+  }).join('');
+  el.innerHTML = rows;
+}
+
 async function loadLearningPlan(childId, card) {
   const el = card.querySelector('[data-role="planCurrent"]');
+  const historyEl = card.querySelector('[data-role="planHistory"]');
   try {
     const data = await api.get(`/api/family/children/${childId}/learning-plan`);
     renderPlanSummary(el, data.plan);
   } catch (err) {
     el.innerHTML = '<p class="form-note">Could not load plan.</p>';
+  }
+  try {
+    const historyData = await api.get(`/api/family/children/${childId}/learning-plans`);
+    renderPlanHistory(historyEl, childId, historyData.plans);
+  } catch (err) {
+    historyEl.innerHTML = '<p class="form-note">Could not load history.</p>';
   }
 }
 
@@ -278,6 +310,13 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (err) {
         errorEl.textContent = err.message;
       }
+    }
+
+    if (action === 'reuseNotes') {
+      card.querySelector('[data-role="planGrade"]').value = e.target.dataset.grade;
+      card.querySelector('[data-role="planNotes"]').value = e.target.dataset.notes;
+      card.querySelector('[data-role="planNotes"]').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
     }
 
     if (action === 'generatePlan') {

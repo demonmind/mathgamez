@@ -15,7 +15,7 @@ const config = {
   nodeEnv: process.env.NODE_ENV || 'development',
   trustProxy: parseInt(process.env.TRUST_PROXY, 10) || 0,
   cookieSecure: process.env.COOKIE_SECURE === 'true',
-  parentSessionMaxAgeMs: parseInt(process.env.PARENT_SESSION_MAX_AGE_MS, 10) || 12 * 60 * 60 * 1000,
+  parentSessionMaxAgeMs: parseInt(process.env.PARENT_SESSION_MAX_AGE_MS, 10) || 24 * 60 * 60 * 1000,
   childSessionMaxAgeMs: parseInt(process.env.CHILD_SESSION_MAX_AGE_MS, 10) || 4 * 60 * 60 * 1000,
   adminSessionMaxAgeMs: parseInt(process.env.ADMIN_SESSION_MAX_AGE_MS, 10) || 12 * 60 * 60 * 1000,
   // Optional: if both are set, the app seeds/updates this admin's password

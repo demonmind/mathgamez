@@ -35,7 +35,7 @@ function isValidAvatarEmoji(value) {
 }
 
 function isValidGameMode(value) {
-  return value === 'round' || value === 'addsub';
+  return value === 'round' || value === 'addsub' || value === 'reading';
 }
 
 function isValidStage(value) {
@@ -134,7 +134,38 @@ function isValidLearningPlanProfile(value) {
   if (!['smaller', 'standard', 'larger'].includes(value.numberRangeAdjustment)) return false;
   if (typeof value.focusSummary !== 'string' ||
       value.focusSummary.length < 1 || value.focusSummary.length > 500) return false;
+  if (typeof value.includeReadingPractice !== 'boolean') return false;
   return true;
+}
+
+function isValidReadingOption(value) {
+  return typeof value === 'string' && value.trim().length >= 1 && value.length <= 200 && !hasControlChar(value);
+}
+
+// Strictly validates the LLM's generated passage+quiz against the exact
+// schema given in the system prompt - this becomes actual kid-facing
+// content, so shape and question count must be exact.
+function isValidReadingPassage(value) {
+  if (!value || typeof value !== 'object') return false;
+  if (typeof value.title !== 'string' || value.title.trim().length < 1 || value.title.length > 200) return false;
+  if (typeof value.passageText !== 'string' || value.passageText.trim().length < 20 || value.passageText.length > 4000) return false;
+  if (!Array.isArray(value.questions) || value.questions.length !== 4) return false;
+  for (const q of value.questions) {
+    if (!q || typeof q !== 'object') return false;
+    if (typeof q.question !== 'string' || q.question.trim().length < 1 || q.question.length > 500) return false;
+    if (!Array.isArray(q.options) || q.options.length !== 4) return false;
+    if (!q.options.every(isValidReadingOption)) return false;
+    if (!Number.isInteger(q.correctIndex) || q.correctIndex < 0 || q.correctIndex > 3) return false;
+  }
+  return true;
+}
+
+// Strictly validates the independent verification pass's output.
+function isValidReadingVerification(value) {
+  if (!value || typeof value !== 'object') return false;
+  if (typeof value.allValid !== 'boolean') return false;
+  if (!Array.isArray(value.issues)) return false;
+  return value.issues.every((i) => Number.isInteger(i));
 }
 
 module.exports = {
@@ -156,4 +187,6 @@ module.exports = {
   isValidGrade,
   isValidLearningPlanNotes,
   isValidLearningPlanProfile,
+  isValidReadingPassage,
+  isValidReadingVerification,
 };

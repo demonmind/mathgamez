@@ -54,6 +54,10 @@ function createApp() {
     name: 'nq.sid',
     resave: false,
     saveUninitialized: false,
+    // Slide the expiry forward on every request so someone who's actually
+    // using the app within each maxAge window never gets logged out mid-use
+    // - only a real gap in activity (e.g. no visits for 24h) expires it.
+    rolling: true,
     cookie: {
       httpOnly: true,
       sameSite: 'lax',

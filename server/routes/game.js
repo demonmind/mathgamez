@@ -3,22 +3,11 @@ const pool = require('../db/pool');
 const { requireChild } = require('../middleware/auth');
 const { isValidGameMode, isValidStage } = require('../lib/validate');
 const { maybeAutoRecalibrate } = require('../lib/learningPlanAuto');
+const { getAvailableStage } = require('../lib/gameProgress');
 
 const router = express.Router();
-const MAX_STAGE = 3;
 const PASS_THRESHOLD = 0.85;
 const REWARD_MINUTES = 5;
-
-async function getAvailableStage(childId, gameMode) {
-  const result = await pool.query(
-    `SELECT COALESCE(MAX(stage), 0) AS highest_completed
-     FROM game_stage_attempts
-     WHERE child_id = $1 AND game_mode = $2 AND completed_at IS NOT NULL`,
-    [childId, gameMode]
-  );
-  const highestCompleted = result.rows[0].highest_completed;
-  return Math.min(MAX_STAGE, highestCompleted + 1);
-}
 
 router.get('/progress', requireChild, async (req, res, next) => {
   try {
@@ -33,9 +22,73 @@ router.get('/progress', requireChild, async (req, res, next) => {
   }
 });
 
+// Reading-only: which stages (up to the unlocked one) actually have at
+// least one generated passage, since unlike math there's no infinite
+// procedural supply - a stage can be "unlocked" but have nothing to play
+// yet if the AI hasn't generated anything for it.
+router.get('/reading/stages', requireChild, async (req, res, next) => {
+  try {
+    const availableStage = await getAvailableStage(req.session.childId, 'reading');
+    const result = await pool.query(
+      `SELECT stage, COUNT(*)::int AS passage_count
+       FROM reading_passages
+       WHERE child_id = $1 AND stage <= $2
+       GROUP BY stage
+       ORDER BY stage`,
+      [req.session.childId, availableStage]
+    );
+    res.json({ stages: result.rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Picks a passage for this child at the given stage - prefers one they
+// haven't completed yet, falls back to any (mastery-focused replay, same
+// spirit as math stages). correctIndex IS included here: the app already
+// grades rounding/add-sub answers client-side and only reports
+// correct/incorrect booleans to the server (see public/js/game.js), so
+// reading follows the same established trust model rather than a stricter
+// one applied only to this mode.
+router.get('/reading/passage', requireChild, async (req, res, next) => {
+  try {
+    const stage = req.query.stage;
+    if (!isValidStage(stage)) {
+      return res.status(400).json({ error: 'Invalid stage' });
+    }
+
+    const result = await pool.query(
+      `SELECT rp.id, rp.title, rp.passage_text, rp.questions,
+              EXISTS(
+                SELECT 1 FROM game_stage_attempts gsa
+                WHERE gsa.reading_passage_id = rp.id AND gsa.child_id = $1 AND gsa.completed_at IS NOT NULL
+              ) AS previously_completed
+       FROM reading_passages rp
+       WHERE rp.child_id = $1 AND rp.stage = $2
+       ORDER BY previously_completed ASC, random()
+       LIMIT 1`,
+      [req.session.childId, stage]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No stories available for this stage yet' });
+    }
+
+    const row = result.rows[0];
+    res.json({
+      passageId: row.id,
+      title: row.title,
+      passageText: row.passage_text,
+      questions: row.questions,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/attempts/start', requireChild, async (req, res, next) => {
   try {
-    const { gameMode, stage } = req.body || {};
+    const { gameMode, stage, readingPassageId } = req.body || {};
     if (!isValidGameMode(gameMode) || !isValidStage(stage)) {
       return res.status(400).json({ error: 'Invalid game mode or stage' });
     }
@@ -45,10 +98,25 @@ router.post('/attempts/start', requireChild, async (req, res, next) => {
       return res.status(400).json({ error: 'That stage is not unlocked yet' });
     }
 
+    let passageId = null;
+    if (gameMode === 'reading') {
+      passageId = Number(readingPassageId);
+      if (!Number.isInteger(passageId)) {
+        return res.status(400).json({ error: 'Missing reading passage' });
+      }
+      const passageResult = await pool.query(
+        'SELECT id FROM reading_passages WHERE id = $1 AND child_id = $2 AND stage = $3',
+        [passageId, req.session.childId, stage]
+      );
+      if (passageResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Reading passage not found' });
+      }
+    }
+
     const result = await pool.query(
-      `INSERT INTO game_stage_attempts (child_id, game_mode, stage)
-       VALUES ($1, $2, $3) RETURNING id`,
-      [req.session.childId, gameMode, stage]
+      `INSERT INTO game_stage_attempts (child_id, game_mode, stage, reading_passage_id)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [req.session.childId, gameMode, stage, passageId]
     );
 
     res.status(201).json({ attemptId: result.rows[0].id });
@@ -161,6 +229,7 @@ router.get('/learning-plan', requireChild, async (req, res, next) => {
       subtractionEmphasis: profile.subtractionEmphasis,
       extraWordProblems: profile.extraWordProblems,
       numberRangeAdjustment: profile.numberRangeAdjustment,
+      includeReadingPractice: profile.includeReadingPractice,
     };
     res.json({ profile: tunables });
   } catch (err) {

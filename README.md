@@ -78,6 +78,43 @@ This is a deliberate simplicity tradeoff (plain SQL init scripts instead of
 a migration framework) - fine for a small self-hosted instance, but worth
 revisiting if the schema starts changing often.
 
+## AI-generated learning plans & Story Cove
+
+A parent can describe what a child struggles with (plus an optional
+document - text, PDF, or a photo for vision-capable models) on the
+dashboard, and a locally-run LLM (any OpenAI-compatible
+`/chat/completions` endpoint - llama.cpp's server, vLLM, etc; see
+`LLM_API_BASE_URL`) returns a small, strictly-validated set of tuning
+knobs. Critically, **the model never writes or grades math itself** - it
+only adjusts parameters (number ranges, how much to emphasize subtraction,
+starting stage, etc.) that bias the existing deterministic question
+generators in `public/js/game.js`.
+
+If a plan flags `includeReadingPractice`, that also kicks off a background
+job that writes a **Story Cove** reading passage: a short age-appropriate
+story plus 4 multiple-choice comprehension questions. Since there's no
+deterministic correctness check for reading comprehension the way there is
+for arithmetic, this uses a **two-pass generate-then-verify** pattern
+(`server/lib/llm.js`): one LLM call writes the passage and answer key, a
+*second, independent* call is given only the passage and the proposed
+answer key and checks whether each marked-correct answer is actually
+supported by the text. If verification fails, the whole passage is
+regenerated from scratch (up to 2 attempts) - nothing is published
+unverified. This runs automatically, with no parent approval step, but
+every plan and passage is visible on the dashboard.
+
+A background job also periodically **re-calibrates** an existing plan
+using the child's actual recent accuracy (not a parent's words) - see
+`LEARNING_PLAN_AUTO_RECAL_THRESHOLD` and the per-child "auto-adjust"
+toggle on the dashboard. None of this ever blocks gameplay: every LLM call
+here is triggered fire-and-forget from a route that already returned its
+response to the child.
+
+Generating a new plan for a child **replaces** what's currently tuning
+their gameplay (it doesn't merge with the previous one) - the dashboard
+keeps every earlier plan under "Earlier plans" so you can bring back an
+older set of notes if a new plan wasn't what you meant to change.
+
 ## Watch-a-video reward redemption
 
 Besides the parent's manual "Mark as Redeemed" button, a kid can spend their

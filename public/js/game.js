@@ -4,8 +4,8 @@
   const MAX_STAGE = 3;
   let score = 0;
   let streak = 0;
-  let chest = 0;          // 0-10 correct answers per stage
-  const CHEST_GOAL = 10;
+  let chest = 0;          // 0-CHEST_GOAL correct answers per stage
+  let CHEST_GOAL = 10;    // 10 for math modes; set to the passage's question count for reading
   let current = {};        // current question data
   let locked = false;      // prevents double-answering
   let ansBoxes = [];        // the 3 answer-digit inputs, index 0 = hundeds, 2 = ones
@@ -33,7 +33,15 @@
       2: '3-digit numbers with regrouping',
       3: 'Word problems & missing-number puzzles — the GATE tier!',
     },
+    reading: {
+      1: 'Short, simple stories',
+      2: 'Medium-length stories with richer vocabulary',
+      3: 'Longer stories that need a bit of inference — the GATE tier!',
+    },
   };
+
+  let currentPassage = null;     // {passageId, title, passageText, questions}
+  let readingQuestionIndex = 0;
 
   const scoreEl = document.getElementById('score');
   const streakEl = document.getElementById('streak');
@@ -51,7 +59,7 @@
   const submitBtn = document.getElementById('submitBtn');
 
   function show(id){
-    ['screen-select','screen-stage-pick','screen-game','screen-celebrate','screen-watch-pick','screen-watch-play'].forEach(s=>{
+    ['screen-select','screen-stage-pick','screen-game','screen-celebrate','screen-watch-pick','screen-watch-play','screen-reading-passage'].forEach(s=>{
       document.getElementById(s).classList.toggle('hidden', s !== id);
     });
   }
@@ -99,6 +107,16 @@
     errorEl.textContent = '';
     document.getElementById('watchPickBalance').textContent = currentBalance;
 
+    // videoSearchEnabled was only set once at page load - if a parent turns
+    // search on/off while a kid's tab is already open, that stale value
+    // would silently hide/show search until a full page reload. Re-check it
+    // every time this screen opens so a parent's change takes effect without
+    // the kid needing to log out and back in.
+    try{
+      const session = await api.get('/api/auth/child/session');
+      videoSearchEnabled = session.videoSearchEnabled;
+    }catch(err){ /* keep last known value if this check fails */ }
+
     document.getElementById('searchWrap').classList.toggle('hidden', !videoSearchEnabled);
     document.getElementById('searchInput').value = '';
     document.getElementById('searchResults').innerHTML = '';
@@ -118,25 +136,38 @@
       durationList.appendChild(btn);
     }
 
+    const videoLabelEl = document.getElementById('watchPickVideoLabel');
+    const noOptionsEl = document.getElementById('watchNoOptionsMsg');
+    videoLabelEl.classList.add('hidden');
+    noOptionsEl.classList.add('hidden');
     videoList.innerHTML = '<p class="form-note">Loading videos…</p>';
+
+    let hasCuratedVideos = false;
     try{
       const data = await api.get('/api/videos/kid');
-      if(data.videos.length === 0){
-        videoList.innerHTML = '<p class="form-note">No approved videos yet — ask a grown-up to add some!</p>';
-        return;
-      }
+      hasCuratedVideos = data.videos.length > 0;
       videoList.innerHTML = '';
-      data.videos.forEach(v => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'stage-btn';
-        btn.innerHTML = `<p class="stage-title">🎬 ${escapeHtml(v.title)}</p>`;
-        btn.addEventListener('click', () => startWatching({ videoId: v.id }, v.youtube_video_id));
-        videoList.appendChild(btn);
-      });
+      if(hasCuratedVideos){
+        videoLabelEl.classList.remove('hidden');
+        data.videos.forEach(v => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'stage-btn';
+          btn.innerHTML = `<p class="stage-title">🎬 ${escapeHtml(v.title)}</p>`;
+          btn.addEventListener('click', () => startWatching({ videoId: v.id }, v.youtube_video_id));
+          videoList.appendChild(btn);
+        });
+      }
     }catch(err){
       videoList.innerHTML = '';
       errorEl.textContent = err.message;
+    }
+
+    // If there's genuinely nothing to pick (no curated videos AND search is
+    // off), say so clearly instead of leaving the screen looking broken -
+    // duration tiles alone don't lead anywhere without a video to watch.
+    if(!hasCuratedVideos && !videoSearchEnabled){
+      noOptionsEl.classList.remove('hidden');
     }
   }
 
@@ -222,6 +253,33 @@
     const stageList = document.getElementById('stageList');
     stageList.innerHTML = '<p class="form-note">Loading your progress…</p>';
     show('screen-stage-pick');
+
+    if(m === 'reading'){
+      try{
+        const data = await api.get('/api/game/reading/stages');
+        stageList.innerHTML = '';
+        if(data.stages.length === 0){
+          stageList.innerHTML = '<p class="form-note">No stories yet — ask a grown-up to generate a reading plan for you!</p>';
+          return;
+        }
+        const suggested = learningPlan && learningPlan.recommendedStartingStage;
+        data.stages.forEach(({ stage: s }) => {
+          const btn = document.createElement('button');
+          btn.className = 'stage-btn';
+          const badge = s === suggested ? ' <span class="suggested-badge">✨ Suggested</span>' : '';
+          btn.innerHTML = `
+            <p class="stage-title">Stage ${s}${s === MAX_STAGE ? ' (GATE)' : ''}${badge}</p>
+            <p class="stage-desc">${STAGE_INFO[m][s]}</p>
+          `;
+          btn.addEventListener('click', () => startGame(m, s));
+          stageList.appendChild(btn);
+        });
+      }catch(err){
+        stageList.innerHTML = `<p class="form-error">${err.message}</p>`;
+      }
+      return;
+    }
+
     try{
       const data = await api.get(`/api/game/progress?mode=${m}`);
       const available = data.availableStage;
@@ -251,9 +309,17 @@
   async function startGame(m, chosenStage){
     mode = m;
     stage = chosenStage || 1;
+
+    if(mode === 'reading'){
+      await startReadingPassage(stage);
+      return;
+    }
+
+    CHEST_GOAL = 10;
     score = 0; streak = 0; chest = 0;
     updateStats();
     show('screen-game');
+    document.getElementById('passageRecapWrap').classList.add('hidden');
     if(mode === 'round'){
       choicesArea.classList.remove('hidden');
       inputArea.classList.add('hidden');
@@ -562,9 +628,80 @@
     feedbackEl.className = 'feedback';
     if(mode === 'round'){
       makeRoundingQuestion();
+    } else if(mode === 'reading'){
+      renderReadingQuestion();
     } else {
       makeAddSubQuestion();
     }
+  }
+
+  // ---------- Story Cove ----------
+  async function startReadingPassage(chosenStage){
+    stage = chosenStage;
+    try{
+      currentPassage = await api.get(`/api/game/reading/passage?stage=${stage}`);
+    }catch(err){
+      feedbackEl.textContent = err.message;
+      feedbackEl.className = 'feedback bad';
+      goHome();
+      return;
+    }
+    readingQuestionIndex = 0;
+    document.getElementById('passageTitle').textContent = currentPassage.title;
+    document.getElementById('passageText').textContent = currentPassage.passageText;
+    show('screen-reading-passage');
+  }
+
+  async function beginReadingQuestions(){
+    score = 0; streak = 0; chest = 0;
+    CHEST_GOAL = currentPassage.questions.length;
+    updateStats();
+    show('screen-game');
+    choicesArea.classList.remove('hidden');
+    inputArea.classList.add('hidden');
+    qValueEl.classList.add('hidden');
+    const recapWrap = document.getElementById('passageRecapWrap');
+    recapWrap.classList.remove('hidden');
+    recapWrap.open = false;
+    document.getElementById('passageRecapText').textContent = currentPassage.passageText;
+    try{
+      const data = await api.post('/api/game/attempts/start', {
+        gameMode: 'reading', stage, readingPassageId: currentPassage.passageId,
+      });
+      currentAttemptId = data.attemptId;
+    }catch(err){
+      feedbackEl.textContent = "Couldn't start this stage - please try again.";
+      feedbackEl.className = 'feedback bad';
+      return;
+    }
+    nextQuestion();
+  }
+
+  function renderReadingQuestion(){
+    const q = currentPassage.questions[readingQuestionIndex];
+    current = { qType: 'reading', correctIndex: q.correctIndex };
+    qLabelEl.textContent = q.question;
+    choicesArea.innerHTML = '';
+    q.options.forEach((opt, idx) => {
+      const btn = document.createElement('button');
+      btn.className = 'choice-btn';
+      btn.textContent = opt;
+      btn.onclick = () => checkReadingAnswer(idx, btn);
+      choicesArea.appendChild(btn);
+    });
+  }
+
+  function checkReadingAnswer(selectedIndex, btnEl){
+    if(locked) return;
+    locked = true;
+    const isCorrect = selectedIndex === current.correctIndex;
+    Array.from(choicesArea.children).forEach((b, idx) => {
+      b.disabled = true;
+      if(idx === current.correctIndex){ b.classList.add('correct'); }
+    });
+    if(!isCorrect){ btnEl.classList.add('wrong'); }
+    readingQuestionIndex++;
+    registerResult(isCorrect);
   }
 
   // ---------- Rounding answer handling ----------
@@ -676,6 +813,8 @@
       streak = 0;
       if(mode === 'round'){
         feedbackEl.textContent = `Close! ${current.num} rounds to ${current.correct}.`;
+      } else if(mode === 'reading'){
+        feedbackEl.textContent = `Not quite — take another look at the story!`;
       } else if(current.qType === 'missing'){
         feedbackEl.textContent = `Not quite — the missing number was ${current.missingAnswer}.`;
       } else {
@@ -732,6 +871,8 @@
 
     const stageCompleteText = mode === 'round'
       ? `Great rounding! Get ready for tougher numbers in Stage ${stage + 1}.`
+      : mode === 'reading'
+      ? `Great reading! Stage ${stage + 1} brings a longer story.`
       : `Great work! Stage ${stage + 1} brings 3-digit numbers and trickier challenges.`;
 
     if(lastCompletionResult && lastCompletionResult.rewardEarned){
@@ -759,6 +900,15 @@
 
   async function nextRound(){
     if(stage < MAX_STAGE){ stage += 1; }
+
+    if(mode === 'reading'){
+      // Reading has no "next question" generator to resume into - it needs
+      // a fresh passage (possibly at the new stage), so reuse the full
+      // pick-a-passage flow rather than the abbreviated math restart below.
+      await startReadingPassage(stage);
+      return;
+    }
+
     chest = 0;
     updateStats();
     show('screen-game');
@@ -792,6 +942,10 @@
         const card = document.querySelector(`.mode-btn[data-mode="${learningPlan.recommendedMode}"]`);
         if(card) card.insertAdjacentHTML('beforeend', '<p class="suggested-badge">✨ Suggested for you</p>');
       }
+      if(learningPlan && learningPlan.includeReadingPractice){
+        const readingCard = document.querySelector('.mode-btn[data-mode="reading"]');
+        if(readingCard) readingCard.insertAdjacentHTML('beforeend', '<p class="suggested-badge">✨ Suggested for you</p>');
+      }
     }catch(err){ /* no plan yet, or fetch failed - just play normally */ }
 
     document.querySelectorAll('.mode-btn').forEach(btn => {
@@ -799,6 +953,8 @@
     });
     document.getElementById('backToModesBtn').addEventListener('click', goHome);
     document.getElementById('changeQuestBtn').addEventListener('click', goHome);
+    document.getElementById('backFromPassageBtn').addEventListener('click', goHome);
+    document.getElementById('startQuestionsBtn').addEventListener('click', beginReadingQuestions);
     document.getElementById('submitBtn').addEventListener('click', submitAnswer);
     document.getElementById('keepSailingBtn').addEventListener('click', nextRound);
     document.getElementById('watchVideoBtn').addEventListener('click', openWatchPick);

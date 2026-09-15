@@ -18,6 +18,8 @@
 .mode-btn:active{ transform: translateY(1px); }
 .mode-btn.round{ background: linear-gradient(160deg, var(--sand), #E9924A); box-shadow: 0 6px 0 #B5652A; }
 .mode-btn.addsub{ background: linear-gradient(160deg, #9DE0C8, var(--good)); box-shadow: 0 6px 0 #1E7267; }
+.mode-btn.reading{ background: linear-gradient(160deg, var(--sea-foam), #4A90B8); box-shadow: 0 6px 0 #2E6E93; }
+@media(min-width:480px){ .mode-btn.reading{ grid-column: 1 / -1; } }
 .mode-icon{ font-size:34px; display:block; margin-bottom:8px; }
 .mode-title{ font-size:19px; font-weight:800; margin:0 0 4px; }
 .mode-desc{ font-size:13px; margin:0; opacity:0.85; }
@@ -220,7 +222,14 @@
 
 /* ---------- Watch-a-video ---------- */
 .watch-video-btn{ width:100%; margin-top:16px; text-align:center; }
-.stage-btn.selected{ outline: 3px solid var(--gold); }
+/* stage-btn's own background is already gold, so a gold outline barely
+   shows - use ink (near-black) plus a checkmark so "selected" is obvious
+   even on a quick glance. */
+.stage-btn.selected{
+  outline: 3px solid var(--ink);
+  box-shadow: 0 6px 0 #B5822A, inset 0 0 0 9999px rgba(255,255,255,0.15);
+}
+.stage-btn.selected .stage-title::after{ content: " ✓"; }
 .video-frame-wrap{
   position:relative; width:100%; padding-top:56.25%; /* 16:9 */
   border-radius:16px; overflow:hidden; background:#000;
@@ -247,4 +256,14 @@
   display:inline-block; margin-top:6px; font-size:11px; font-weight:800;
   color: var(--ink); background: rgba(255,255,255,0.55); border-radius:999px;
   padding:3px 10px;
+}
+
+/* ---------- Story Cove ---------- */
+.passage-title{
+  margin:0 0 12px; font-size: clamp(20px, 5.5vw, 26px); color: var(--gold); text-align:center;
+}
+.passage-text{
+  background: rgba(0,0,0,0.2); border-radius:16px; padding:18px;
+  font-size:16px; line-height:1.6; color: var(--parchment);
+  max-height:320px; overflow-y:auto; margin-bottom:18px;
 }

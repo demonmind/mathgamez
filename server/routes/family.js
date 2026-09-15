@@ -7,6 +7,7 @@ const { requireParent } = require('../middleware/auth');
 const { learningPlanLimiter } = require('../middleware/rateLimiters');
 const { processDocument, isSupportedMimeType } = require('../lib/documentText');
 const { generateLearningPlan } = require('../lib/llm');
+const { maybeGenerateReadingPassage } = require('../lib/readingPassageAuto');
 const {
   isValidDisplayName,
   isValidAvatarEmoji,
@@ -218,6 +219,10 @@ router.post('/children/:id/learning-plan', requireParent, learningPlanLimiter, u
     );
 
     res.status(201).json(result.rows[0]);
+
+    // Fire-and-forget: a two-pass (generate + verify) passage call can take
+    // well over a minute and must never delay the parent's response.
+    maybeGenerateReadingPassage(childId, result.rows[0]).catch(() => {});
   } catch (err) {
     next(err);
   }
@@ -244,6 +249,34 @@ router.get('/children/:id/learning-plan', requireParent, async (req, res, next) 
       [childId]
     );
     res.json({ plan: result.rows[0] || null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Full history (not just the latest) - so generating a new plan never
+// quietly makes an earlier one invisible in the dashboard.
+router.get('/children/:id/learning-plans', requireParent, async (req, res, next) => {
+  try {
+    const childId = Number(req.params.id);
+    if (!Number.isInteger(childId)) {
+      return res.status(400).json({ error: 'Invalid child id' });
+    }
+
+    const childResult = await pool.query(
+      'SELECT id FROM children WHERE id = $1 AND family_id = $2',
+      [childId, req.session.familyId]
+    );
+    if (childResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Child not found' });
+    }
+
+    const result = await pool.query(
+      `SELECT id, grade, parent_notes, document_filename, profile, generated_by, trigger_summary, created_at
+       FROM learning_plans WHERE child_id = $1 ORDER BY created_at DESC LIMIT 20`,
+      [childId]
+    );
+    res.json({ plans: result.rows });
   } catch (err) {
     next(err);
   }
