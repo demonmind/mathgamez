@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Number Quest — Play</title>
-<link rel="stylesheet" href="/css/theme.css?v=10">
-<link rel="stylesheet" href="/css/game.css?v=10">
+<link rel="stylesheet" href="/css/theme.css?v=11">
+<link rel="stylesheet" href="/css/game.css?v=11">
 </head>
 <body>
 <div class="wrap">
@@ -108,6 +108,17 @@
         <p class="q-label question-text" id="qLabel">Loading…</p>
       </div>
 
+      <div class="scratchpad-bar">
+        <button type="button" class="back-btn" id="scratchpadToggleBtn">✏️ Scratchpad</button>
+      </div>
+      <div id="scratchpadPanel" class="scratchpad-panel hidden">
+        <canvas id="scratchpadCanvas" class="scratchpad-canvas"></canvas>
+        <div class="scratchpad-actions">
+          <button type="button" class="back-btn" id="scratchpadClearBtn">Clear</button>
+          <button type="button" class="back-btn" id="scratchpadCloseBtn">Done</button>
+        </div>
+      </div>
+
       <div id="choicesArea" class="choices"></div>
 
       <p class="feedback" id="feedback"></p>
@@ -127,7 +138,7 @@
   <footer>Fill the chest with correct answers to clear a stage — new stages keep unlocking as you go!</footer>
 </div>
 
-<script src="/js/api.js?v=10"></script>
-<script src="/js/game.js?v=10"></script>
+<script src="/js/api.js?v=11"></script>
+<script src="/js/game.js?v=11"></script>
 </body>
 </html>

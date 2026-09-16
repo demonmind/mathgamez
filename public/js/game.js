@@ -21,6 +21,11 @@
   let currentContent = null; // {contentId, title, sharedContext, questions}
   let questionIndex = 0;
 
+  let scratchpadOpen = false;
+  let scratchpadDrawing = false;
+  let scratchpadLastX = 0;
+  let scratchpadLastY = 0;
+
   const scoreEl = document.getElementById('score');
   const streakEl = document.getElementById('streak');
   const stageEl = document.getElementById('stageNum');
@@ -342,6 +347,78 @@
     chestFillEl.style.width = (chest / CHEST_GOAL * 100) + '%';
   }
 
+  // ---------- Scratchpad ----------
+  // A blank drawing surface for working problems out by hand - not graded
+  // or submitted anywhere, purely for the child's own scratch work. Uses
+  // Pointer Events rather than separate mouse/touch handlers so a mouse, a
+  // finger, and a stylus (Apple Pencil on iPad reports as pointerType
+  // "pen", including pressure) all draw through the same code path.
+  const scratchpadCanvas = document.getElementById('scratchpadCanvas');
+  const scratchpadCtx = scratchpadCanvas.getContext('2d');
+
+  // The canvas's backing pixel buffer must match its displayed size *
+  // devicePixelRatio for crisp lines on a Retina/iPad screen - a hidden
+  // panel reports 0 size, so this only runs once the panel is visible.
+  // Resizing clears any existing drawing (resize is rare - orientation
+  // change - so this tradeoff favors simplicity).
+  function resizeScratchpadCanvas(){
+    const rect = scratchpadCanvas.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    scratchpadCanvas.width = Math.round(rect.width * ratio);
+    scratchpadCanvas.height = Math.round(rect.height * ratio);
+    scratchpadCtx.scale(ratio, ratio);
+    scratchpadCtx.lineCap = 'round';
+    scratchpadCtx.lineJoin = 'round';
+    scratchpadCtx.strokeStyle = '#2A2118';
+  }
+
+  function clearScratchpad(){
+    scratchpadCtx.clearRect(0, 0, scratchpadCanvas.width, scratchpadCanvas.height);
+  }
+
+  function toggleScratchpad(){
+    scratchpadOpen = !scratchpadOpen;
+    document.getElementById('scratchpadPanel').classList.toggle('hidden', !scratchpadOpen);
+    if(scratchpadOpen){
+      resizeScratchpadCanvas();
+    }
+  }
+
+  function scratchpadPoint(e){
+    const rect = scratchpadCanvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  function scratchpadPointerDown(e){
+    scratchpadDrawing = true;
+    const p = scratchpadPoint(e);
+    scratchpadLastX = p.x;
+    scratchpadLastY = p.y;
+    scratchpadCanvas.setPointerCapture(e.pointerId);
+  }
+
+  function scratchpadPointerMove(e){
+    if(!scratchpadDrawing) return;
+    const p = scratchpadPoint(e);
+    // Apple Pencil (and some styluses) report pressure 0-1 via
+    // e.pressure; a mouse/finger reports 0 while not "down" per the spec
+    // but the browser still fires move events with pressure 0.5 once a
+    // button/touch is active - either way this gives a natural-feeling
+    // line without requiring pressure support to work at all.
+    const width = e.pointerType === 'pen' && e.pressure > 0 ? 1 + e.pressure * 3 : 2.5;
+    scratchpadCtx.lineWidth = width;
+    scratchpadCtx.beginPath();
+    scratchpadCtx.moveTo(scratchpadLastX, scratchpadLastY);
+    scratchpadCtx.lineTo(p.x, p.y);
+    scratchpadCtx.stroke();
+    scratchpadLastX = p.x;
+    scratchpadLastY = p.y;
+  }
+
+  function scratchpadPointerUp(){
+    scratchpadDrawing = false;
+  }
+
   // ---------- Question rendering (single path for every skill) ----------
   // Every skill's stage content is AI-generated ahead of time and stored
   // (see server/lib/llm.js's two-pass generate+verify pipeline) as exactly
@@ -350,6 +427,7 @@
     locked = false;
     feedbackEl.textContent = '';
     feedbackEl.className = 'feedback';
+    if(scratchpadOpen) clearScratchpad(); // fresh scratch space per question
     renderSkillQuestion();
   }
 
@@ -502,6 +580,16 @@
       skills = [];
     }
     renderSkillTiles(skills);
+
+    document.getElementById('scratchpadToggleBtn').addEventListener('click', toggleScratchpad);
+    document.getElementById('scratchpadClearBtn').addEventListener('click', clearScratchpad);
+    document.getElementById('scratchpadCloseBtn').addEventListener('click', toggleScratchpad);
+    scratchpadCanvas.addEventListener('pointerdown', scratchpadPointerDown);
+    scratchpadCanvas.addEventListener('pointermove', scratchpadPointerMove);
+    scratchpadCanvas.addEventListener('pointerup', scratchpadPointerUp);
+    scratchpadCanvas.addEventListener('pointercancel', scratchpadPointerUp);
+    scratchpadCanvas.addEventListener('pointerleave', scratchpadPointerUp);
+    window.addEventListener('resize', () => { if(scratchpadOpen) resizeScratchpadCanvas(); });
 
     document.getElementById('backToModesBtn').addEventListener('click', goHome);
     document.getElementById('changeQuestBtn').addEventListener('click', goHome);

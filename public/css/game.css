@@ -82,6 +82,25 @@
   line-height:1.4;
 }
 
+/* ---------- Scratchpad ---------- */
+.scratchpad-bar{ text-align:center; margin-bottom:14px; }
+.scratchpad-panel{ margin-bottom:16px; }
+.scratchpad-canvas{
+  display:block;
+  width:100%;
+  height:300px;
+  /* A paper-like surface regardless of app theme, so pen strokes read
+     clearly no matter what - matches how a real scratchpad looks. */
+  background: #FBF8EF;
+  border-radius:14px;
+  border: 3px solid rgba(255,255,255,0.2);
+  touch-action:none; /* let a finger/pen draw instead of scrolling the page */
+  cursor:crosshair;
+}
+.scratchpad-actions{
+  display:flex; justify-content:center; gap:10px; margin-top:10px;
+}
+
 .choices{
   display:grid; grid-template-columns: 1fr 1fr; gap:12px;
 }
