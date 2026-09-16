@@ -9,6 +9,10 @@ const { maybeGenerateStageContentForNextStage } = require('../lib/skillContentAu
 const router = express.Router();
 const PASS_THRESHOLD = 0.90;
 const REWARD_MINUTES = 5;
+// Every stage's AI-generated content is exactly this many questions - see
+// isValidSkillStageContent in server/lib/validate.js, which rejects any
+// content that doesn't have exactly 4.
+const EXPECTED_QUESTIONS = 4;
 
 // Confirms a slug is both well-formed AND actually one of this child's
 // currently-active skills - the format check alone is not a security
@@ -176,7 +180,7 @@ router.post('/attempts/:id/complete', requireChild, async (req, res, next) => {
     await client.query('BEGIN');
 
     const attemptResult = await client.query(
-      `SELECT id, game_mode, correct_count, incorrect_count
+      `SELECT id, game_mode, stage, correct_count, incorrect_count
        FROM game_stage_attempts
        WHERE id = $1 AND child_id = $2 AND completed_at IS NULL
        FOR UPDATE`,
@@ -188,22 +192,47 @@ router.post('/attempts/:id/complete', requireChild, async (req, res, next) => {
       return res.status(404).json({ error: 'Attempt not found or already completed' });
     }
 
-    const { game_mode: skillSlug, correct_count: correctCount, incorrect_count: incorrectCount } = attemptResult.rows[0];
+    const { game_mode: skillSlug, stage, correct_count: correctCount, incorrect_count: incorrectCount } = attemptResult.rows[0];
     const total = correctCount + incorrectCount;
-    const accuracy = total > 0 ? correctCount / total : 0;
-    const passed = total > 0 && accuracy >= PASS_THRESHOLD;
+
+    // Every stage's content is exactly EXPECTED_QUESTIONS questions (see
+    // isValidSkillStageContent) - require that many recorded answers before
+    // an attempt can be completed at all, so a single forged /answer call
+    // can't fast-track a pass.
+    if (total !== EXPECTED_QUESTIONS) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'This attempt is incomplete' });
+    }
+
+    const accuracy = correctCount / total;
+    const passed = accuracy >= PASS_THRESHOLD;
 
     await client.query(
       'UPDATE game_stage_attempts SET completed_at = now(), passed_threshold = $1 WHERE id = $2',
       [passed, attemptId]
     );
 
+    // A reward only pays out the first time this exact (skill, stage) is
+    // ever passed - replaying an already-cleared stage is still free to
+    // practice, it just doesn't mint more reward minutes each time.
+    let rewardEarned = false;
     if (passed) {
-      await client.query(
-        `INSERT INTO reward_ledger (child_id, minutes, source_attempt_id, reason)
-         VALUES ($1, $2, $3, 'stage_pass')`,
-        [req.session.childId, REWARD_MINUTES, attemptId]
+      const priorRewardResult = await client.query(
+        `SELECT 1 FROM reward_ledger rl
+         JOIN game_stage_attempts gsa ON gsa.id = rl.source_attempt_id
+         WHERE gsa.child_id = $1 AND gsa.game_mode = $2 AND gsa.stage = $3 AND rl.reason = 'stage_pass'
+         LIMIT 1`,
+        [req.session.childId, skillSlug, stage]
       );
+      rewardEarned = priorRewardResult.rows.length === 0;
+
+      if (rewardEarned) {
+        await client.query(
+          `INSERT INTO reward_ledger (child_id, minutes, source_attempt_id, reason)
+           VALUES ($1, $2, $3, 'stage_pass')`,
+          [req.session.childId, REWARD_MINUTES, attemptId]
+        );
+      }
     }
 
     await client.query('COMMIT');
@@ -211,8 +240,8 @@ router.post('/attempts/:id/complete', requireChild, async (req, res, next) => {
     res.json({
       accuracy,
       passedThreshold: passed,
-      rewardEarned: passed,
-      minutesEarned: passed ? REWARD_MINUTES : 0,
+      rewardEarned,
+      minutesEarned: rewardEarned ? REWARD_MINUTES : 0,
     });
 
     // Fire-and-forget: never let a ~30s LLM call delay the kid's response.
