@@ -228,6 +228,81 @@ router.post('/children/:id/learning-plan', requireParent, learningPlanLimiter, u
   }
 });
 
+// Edits an earlier prompt in place and regenerates its tuning profile from
+// the updated grade/notes - unlike POST above (which always adds a new
+// row), this updates the same learning_plans row and bumps created_at, so
+// an edited older prompt becomes the active plan again (GET /learning-plan
+// and the kid-facing tunables both just take the most recent row).
+router.patch('/children/:id/learning-plan/:planId', requireParent, learningPlanLimiter, uploadDocument, async (req, res, next) => {
+  try {
+    const childId = Number(req.params.id);
+    const planId = Number(req.params.planId);
+    if (!Number.isInteger(childId) || !Number.isInteger(planId)) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+
+    const { grade, notes } = req.body || {};
+    if (!isValidGrade(grade)) {
+      return res.status(400).json({ error: 'Please choose a grade' });
+    }
+    if (!isValidLearningPlanNotes(notes)) {
+      return res.status(400).json({ error: 'Please describe what your child struggles with (1-2000 characters)' });
+    }
+
+    const childResult = await pool.query(
+      'SELECT id FROM children WHERE id = $1 AND family_id = $2',
+      [childId, req.session.familyId]
+    );
+    if (childResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Child not found' });
+    }
+
+    const planResult = await pool.query(
+      'SELECT id, document_filename, document_excerpt FROM learning_plans WHERE id = $1 AND child_id = $2',
+      [planId, childId]
+    );
+    if (planResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Plan not found' });
+    }
+
+    let documentExcerpt = planResult.rows[0].document_excerpt;
+    let documentImage = null;
+    let documentFilename = planResult.rows[0].document_filename;
+
+    if (req.file) {
+      documentFilename = req.file.originalname;
+      if (!isSupportedMimeType(req.file.mimetype)) {
+        return res.status(400).json({ error: 'Unsupported file type - please upload a .txt, .pdf, or image (jpg/png/webp)' });
+      }
+      if (req.file.mimetype.startsWith('image/') && !config.llmVisionCapable) {
+        return res.status(400).json({ error: 'The current AI model can\'t read images - please upload a .txt or .pdf instead, or paste the details into the notes field' });
+      }
+      const processed = await processDocument(req.file);
+      documentExcerpt = processed.excerpt || null;
+      documentImage = processed.image || null;
+    }
+
+    const profile = await generateLearningPlan({ grade, notes, documentExcerpt, documentImage });
+
+    const result = await pool.query(
+      `UPDATE learning_plans
+         SET grade = $1, parent_notes = $2, document_filename = $3, document_excerpt = $4,
+             profile = $5, generated_by = 'parent', trigger_summary = NULL, created_at = NOW()
+       WHERE id = $6
+       RETURNING id, grade, parent_notes, document_filename, profile, generated_by, trigger_summary, created_at`,
+      [grade, notes.trim(), documentFilename, documentExcerpt, JSON.stringify(profile), planId]
+    );
+
+    res.json(result.rows[0]);
+
+    // Fire-and-forget, same as the initial-generation path - the profile
+    // may have newly turned reading practice on/off.
+    maybeGenerateReadingPassage(childId, result.rows[0]).catch(() => {});
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/children/:id/learning-plan', requireParent, async (req, res, next) => {
   try {
     const childId = Number(req.params.id);

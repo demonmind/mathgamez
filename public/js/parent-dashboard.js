@@ -119,8 +119,10 @@ function renderChildren() {
           <input type="file" data-role="planDocument" accept=".txt,.pdf,image/jpeg,image/png,image/webp">
         </div>
         <p class="form-note">This runs a locally-hosted AI model to suggest which stages/skills to emphasize - it never writes or grades any math itself. Can take up to a minute. <strong>Generating a new plan replaces the active one</strong> - if you want to cover multiple things, describe them together in one submission, or check "Earlier plans" above afterward to bring back an older one.</p>
+        <p class="form-note hidden" data-role="planEditingNote" style="color: var(--gold);">Editing an earlier prompt - updating it will make it the active plan again.</p>
         <p class="form-error" data-role="planError"></p>
-        <button type="button" class="submit-btn" data-action="generatePlan">Generate Plan</button>
+        <button type="button" class="submit-btn" data-action="generatePlan" data-role="generatePlanBtn">Generate Plan</button>
+        <button type="button" class="small-btn hidden" data-action="cancelEditPlan" data-role="cancelEditBtn" style="margin-left:8px;">Cancel edit</button>
       </details>
     `;
     list.appendChild(card);
@@ -147,6 +149,8 @@ function renderPlanSummary(el, plan) {
     <p class="form-note">${escapeHtml(p.focusSummary)}</p>
     <p class="form-note">Mode: ${escapeHtml(p.recommendedMode)} · Suggested stage: ${p.recommendedStartingStage} · Range: ${escapeHtml(p.numberRangeAdjustment)}</p>
     ${trigger}
+    <button type="button" class="small-btn" data-action="editPlan" data-plan-id="${plan.id}"
+      data-grade="${escapeHtml(plan.grade)}" data-notes="${escapeHtml(plan.parent_notes)}" style="margin-top:6px;">Edit this prompt</button>
   `;
 }
 
@@ -165,6 +169,8 @@ function renderPlanHistory(el, childId, plans) {
         </span>
         <button type="button" class="small-btn" data-action="reuseNotes" data-child-id="${childId}"
           data-grade="${escapeHtml(plan.grade)}" data-notes="${escapeHtml(plan.parent_notes)}">Use these notes again</button>
+        <button type="button" class="small-btn" data-action="editPlan" data-plan-id="${plan.id}"
+          data-grade="${escapeHtml(plan.grade)}" data-notes="${escapeHtml(plan.parent_notes)}">Edit this prompt</button>
       </div>
     `;
   }).join('');
@@ -319,6 +325,27 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    if (action === 'editPlan') {
+      card.dataset.editingPlanId = e.target.dataset.planId;
+      card.querySelector('[data-role="planGrade"]').value = e.target.dataset.grade;
+      card.querySelector('[data-role="planNotes"]').value = e.target.dataset.notes;
+      card.querySelector('[data-role="generatePlanBtn"]').textContent = 'Update Plan';
+      card.querySelector('[data-role="planEditingNote"]').classList.remove('hidden');
+      card.querySelector('[data-role="cancelEditBtn"]').classList.remove('hidden');
+      card.querySelector('[data-role="planNotes"]').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+
+    if (action === 'cancelEditPlan') {
+      delete card.dataset.editingPlanId;
+      card.querySelector('[data-role="planGrade"]').value = GRADE_OPTIONS[0];
+      card.querySelector('[data-role="planNotes"]').value = '';
+      card.querySelector('[data-role="generatePlanBtn"]').textContent = 'Generate Plan';
+      card.querySelector('[data-role="planEditingNote"]').classList.add('hidden');
+      card.querySelector('[data-role="cancelEditBtn"]').classList.add('hidden');
+      return;
+    }
+
     if (action === 'generatePlan') {
       const errorEl = card.querySelector('[data-role="planError"]');
       const grade = card.querySelector('[data-role="planGrade"]').value;
@@ -331,10 +358,11 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
+      const editingPlanId = card.dataset.editingPlanId;
       const btn = e.target;
       const originalLabel = btn.textContent;
       btn.disabled = true;
-      btn.textContent = 'Generating… (can take up to a minute)';
+      btn.textContent = editingPlanId ? 'Updating… (can take up to a minute)' : 'Generating… (can take up to a minute)';
 
       const formData = new FormData();
       formData.append('grade', grade);
@@ -342,14 +370,23 @@ document.addEventListener('DOMContentLoaded', () => {
       if (fileInput.files[0]) formData.append('document', fileInput.files[0]);
 
       try {
-        await api.postForm(`/api/family/children/${childId}/learning-plan`, formData);
+        if (editingPlanId) {
+          await api.patchForm(`/api/family/children/${childId}/learning-plan/${editingPlanId}`, formData);
+          delete card.dataset.editingPlanId;
+          card.querySelector('[data-role="planEditingNote"]').classList.add('hidden');
+          card.querySelector('[data-role="cancelEditBtn"]').classList.add('hidden');
+          btn.textContent = 'Generate Plan';
+        } else {
+          await api.postForm(`/api/family/children/${childId}/learning-plan`, formData);
+          btn.textContent = originalLabel;
+        }
         await loadLearningPlan(childId, card);
         fileInput.value = '';
       } catch (err) {
         errorEl.textContent = err.message;
+        btn.textContent = originalLabel;
       } finally {
         btn.disabled = false;
-        btn.textContent = originalLabel;
       }
     }
   });

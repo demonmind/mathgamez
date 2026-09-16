@@ -22,8 +22,8 @@ async function apiRequest(method, url, body) {
   return data;
 }
 
-async function apiPostForm(url, formData) {
-  const res = await fetch(url, { method: 'POST', credentials: 'same-origin', body: formData });
+async function apiSendForm(method, url, formData) {
+  const res = await fetch(url, { method, credentials: 'same-origin', body: formData });
 
   let data = null;
   const text = await res.text();
@@ -46,5 +46,6 @@ const api = {
   post: (url, body) => apiRequest('POST', url, body || {}),
   patch: (url, body) => apiRequest('PATCH', url, body || {}),
   del: (url) => apiRequest('DELETE', url),
-  postForm: (url, formData) => apiPostForm(url, formData),
+  postForm: (url, formData) => apiSendForm('POST', url, formData),
+  patchForm: (url, formData) => apiSendForm('PATCH', url, formData),
 };
