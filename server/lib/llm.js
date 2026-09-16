@@ -62,7 +62,16 @@ function stripCodeFence(text) {
 // latency for a real shot at catching a wrong answer key on that one call.
 async function callChatCompletion(messages, { forceThinking } = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.llmTimeoutMs);
+  // LLM_TIMEOUT_MS=0 (the default) disables the abort entirely - stage
+  // content generation now routinely involves multiple sequential calls
+  // (generate + verify, sometimes with forced "thinking" - see
+  // forceThinking below) that can legitimately run well past a minute, and
+  // almost every caller in this file is a fire-and-forget background job
+  // anyway (see server/lib/skillContentAuto.js), so there's no request
+  // waiting on a clock. Set a positive value to restore a hard cutoff.
+  const timeout = config.llmTimeoutMs > 0
+    ? setTimeout(() => controller.abort(), config.llmTimeoutMs)
+    : null;
 
   const disableThinking = config.llmDisableThinking && !forceThinking;
 
@@ -96,7 +105,7 @@ async function callChatCompletion(messages, { forceThinking } = {}) {
     error.status = 422;
     throw error;
   } finally {
-    clearTimeout(timeout);
+    if (timeout) clearTimeout(timeout);
   }
 
   if (!response.ok) {
@@ -141,29 +150,34 @@ async function runJsonPrompt(messages, isValidFn, retryReminder, opts) {
 
 const RETRY_REMINDER = 'That was not valid JSON matching the exact schema. Respond again with ONLY the JSON object, no other text.';
 
-// documentImage (optional): { base64, mimeType } - sent as an image content
-// part for vision-capable models (see config.llmVisionCapable). Mutually
-// exclusive with documentExcerpt (text extracted from a PDF/text upload).
+// documentImages (optional): [{ base64, mimeType }, ...] - each sent as an
+// image content part for vision-capable models (see config.llmVisionCapable).
+// documentExcerpt (optional): merged text extracted from any text/PDF
+// uploads (see documentText.js's processDocuments) - a parent can attach
+// several files at once (e.g. multiple pages of a worksheet), mixing
+// text/PDF and image types freely.
 // currentSkills (optional): the child's currently-active skills
 // (child_skills rows), given so the model can reuse a matching slug
 // instead of minting a new one for the same underlying concept.
-async function generateLearningPlan({ grade, notes, documentExcerpt, documentImage, currentSkills }) {
+async function generateLearningPlan({ grade, notes, documentExcerpt, documentImages, currentSkills }) {
   const textContent = [
     `Child's grade: ${grade}`,
     `Parent's description of what the child struggles with: ${notes}`,
-    documentExcerpt ? `\nAdditional context from an uploaded document:\n${documentExcerpt}` : '',
-    documentImage ? '\n(An image of a document was also attached - use it as additional context.)' : '',
+    documentExcerpt ? `\nAdditional context from uploaded document(s):\n${documentExcerpt}` : '',
+    documentImages && documentImages.length > 0
+      ? `\n(${documentImages.length} image(s) of a document were also attached - use them as additional context.)`
+      : '',
     currentSkills && currentSkills.length > 0
       ? `\nCURRENT SKILL LIST for this child (reuse a slug/title below if a new skill covers the same concept):\n${currentSkills.map((s) => `- slug: "${s.slug}", title: "${s.title}" - ${s.description}`).join('\n')}`
       : '',
   ].join('\n');
 
-  const userMessage = documentImage
+  const userMessage = documentImages && documentImages.length > 0
     ? {
         role: 'user',
         content: [
           { type: 'text', text: textContent },
-          { type: 'image_url', image_url: { url: `data:${documentImage.mimeType};base64,${documentImage.base64}` } },
+          ...documentImages.map((img) => ({ type: 'image_url', image_url: { url: `data:${img.mimeType};base64,${img.base64}` } })),
         ],
       }
     : { role: 'user', content: textContent };

@@ -31,7 +31,10 @@ const config = {
   llmModel: process.env.LLM_MODEL || 'default',
   llmVisionCapable: process.env.LLM_VISION_CAPABLE !== 'false',
   llmApiKey: process.env.LLM_API_KEY || null,
-  llmTimeoutMs: parseInt(process.env.LLM_TIMEOUT_MS, 10) || 90 * 1000,
+  // 0 disables the timeout entirely (default) - see the comment in
+  // server/lib/llm.js's callChatCompletion for why. Set a positive value
+  // (milliseconds) to restore a hard cutoff.
+  llmTimeoutMs: parseInt(process.env.LLM_TIMEOUT_MS, 10) || 0,
   // Suppresses Qwen3-style "thinking" mode (see server/lib/llm.js) - set to
   // false if a future model/server errors on the extra field instead of
   // ignoring it.

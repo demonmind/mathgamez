@@ -124,10 +124,10 @@ function renderChildren() {
           <textarea data-role="planNotes" rows="3" maxlength="2000"></textarea>
         </div>
         <div class="field">
-          <label>Upload a document (optional - report card, teacher note, worksheet photo)</label>
-          <input type="file" data-role="planDocument" accept=".txt,.pdf,image/jpeg,image/png,image/webp">
+          <label>Upload document(s) (optional - report cards, teacher notes, worksheet photos - up to 5 files)</label>
+          <input type="file" data-role="planDocument" accept=".txt,.pdf,image/jpeg,image/png,image/webp" multiple>
         </div>
-        <p class="form-note">This runs a locally-hosted AI model to suggest which stages/skills to emphasize - it never writes or grades any math itself. Can take up to a minute. <strong>Generating a new plan replaces the active one</strong> - if you want to cover multiple things, describe them together in one submission, or check "Earlier plans" above afterward to bring back an older one.</p>
+        <p class="form-note">This runs a locally-hosted AI model to decide which skills to practice and generate the actual practice content for each one - it can take a while (no fixed time limit, especially with several skills or documents). <strong>Generating a new plan replaces the active skill list</strong> - if you want to cover multiple things, describe them together in one submission, or check "Earlier plans" above afterward to bring back an older one.</p>
         <p class="form-note hidden" data-role="planEditingNote" style="color: var(--gold);">Editing an earlier prompt - updating it will make it the active plan again.</p>
         <p class="form-error" data-role="planError"></p>
         <button type="button" class="submit-btn" data-action="generatePlan" data-role="generatePlanBtn">Generate Plan</button>
@@ -376,12 +376,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const btn = e.target;
       const originalLabel = btn.textContent;
       btn.disabled = true;
-      btn.textContent = editingPlanId ? 'Updating… (can take up to a minute)' : 'Generating… (can take up to a minute)';
+      btn.textContent = editingPlanId ? 'Updating… (this can take a while)' : 'Generating… (this can take a while)';
 
       const formData = new FormData();
       formData.append('grade', grade);
       formData.append('notes', notes);
-      if (fileInput.files[0]) formData.append('document', fileInput.files[0]);
+      Array.from(fileInput.files).forEach((file) => formData.append('documents', file));
 
       try {
         if (editingPlanId) {

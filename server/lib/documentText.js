@@ -50,4 +50,31 @@ async function processDocument(file) {
   throw error;
 }
 
-module.exports = { processDocument, isSupportedMimeType };
+const MAX_FILES = 5;
+
+// Runs processDocument over every uploaded file and merges the results:
+// text/PDF excerpts are concatenated (each still individually capped at
+// MAX_EXCERPT_CHARS, labeled by filename so the model can tell them
+// apart), and images are collected into an array for a vision-capable
+// model. Throws the same clean, user-facing errors processDocument does -
+// one bad file fails the whole upload rather than silently dropping it.
+async function processDocuments(files) {
+  const excerptParts = [];
+  const images = [];
+
+  for (const file of files) {
+    const result = await processDocument(file);
+    if (result.excerpt) {
+      excerptParts.push(`--- ${file.originalname} ---\n${result.excerpt}`);
+    } else if (result.image) {
+      images.push(result.image);
+    }
+  }
+
+  return {
+    excerpt: excerptParts.length > 0 ? excerptParts.join('\n\n') : null,
+    images,
+  };
+}
+
+module.exports = { processDocument, processDocuments, isSupportedMimeType, MAX_FILES };

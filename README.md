@@ -80,10 +80,11 @@ revisiting if the schema starts changing often.
 
 ## AI-generated learning plans & skill tiles
 
-A parent describes what a child struggles with (plus an optional document -
-text, PDF, or a photo for vision-capable models) on the dashboard, and a
-locally-run LLM (any OpenAI-compatible `/chat/completions` endpoint -
-llama.cpp's server, vLLM, etc; see `LLM_API_BASE_URL`) decides which
+A parent describes what a child struggles with (plus up to 5 optional
+documents - text, PDF, and/or photos for vision-capable models, mixed
+types allowed) on the dashboard, and a locally-run LLM (any
+OpenAI-compatible `/chat/completions` endpoint - llama.cpp's server, vLLM,
+etc; see `LLM_API_BASE_URL`) decides which
 **skills** apply to this child - there's no fixed taxonomy of practice
 areas, since different grades and kids need different programs. Each skill
 becomes one tile in the game (`GET /api/game/learning-plan`), and a child
@@ -104,6 +105,12 @@ stage is regenerated (up to 2 attempts) - nothing unverified is shown to a
 child. The verification pass re-enables the model's "thinking" mode
 specifically for non-passage content, trading latency for a better shot at
 catching a wrong computation (see `forceThinking` in `llm.js`).
+
+There's no request timeout on LLM calls by default (`LLM_TIMEOUT_MS=0`) -
+a multi-skill plan can fan out several two-pass generations back to back,
+and almost every call happens in a fire-and-forget background job anyway,
+so nothing is left waiting on a clock. Set `LLM_TIMEOUT_MS` to a positive
+number of milliseconds if you want a hard cutoff restored.
 
 Passing a stage requires 90% accuracy and stages are uncapped - difficulty
 scales relative to a child's own recent accuracy in that skill (fed into
@@ -212,6 +219,15 @@ purging anything. **After any deploy that changes a file under
 `public/js/` or `public/css/`, bump the `?v=N` value** (a single
 find-and-replace across `public/**/*.html` is enough - grep for `?v=1` to
 find every occurrence).
+
+Cloudflare's edge also enforces its own ~100 second timeout on proxied HTTP
+requests (a 524 error past that point), independent of this app's own
+`LLM_TIMEOUT_MS`. That doesn't affect content generation itself - it's
+fire-and-forget and outlives the request that triggered it - but the
+*initial* skill-extraction call in `POST/PATCH .../learning-plan` is
+awaited before responding to the parent, so a parent's plan-generation
+request could still hit a Cloudflare 524 if that one call alone runs past
+~100s, even though the app itself has no timeout.
 
 ## Security notes
 

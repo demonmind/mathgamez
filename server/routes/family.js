@@ -5,7 +5,7 @@ const pool = require('../db/pool');
 const config = require('../config/env');
 const { requireParent } = require('../middleware/auth');
 const { learningPlanLimiter } = require('../middleware/rateLimiters');
-const { processDocument, isSupportedMimeType } = require('../lib/documentText');
+const { processDocuments, isSupportedMimeType, MAX_FILES } = require('../lib/documentText');
 const { generateLearningPlan } = require('../lib/llm');
 const { reconcileChildSkills } = require('../lib/skillProgress');
 const { maybeGenerateStageContentForNewSkills } = require('../lib/skillContentAuto');
@@ -24,15 +24,17 @@ const BCRYPT_ROUNDS = 12;
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 8 * 1024 * 1024 },
+  limits: { fileSize: 8 * 1024 * 1024, files: MAX_FILES },
 });
 
 function uploadDocument(req, res, next) {
-  upload.single('document')(req, res, (err) => {
+  upload.array('documents', MAX_FILES)(req, res, (err) => {
     if (err) {
       const message = err.code === 'LIMIT_FILE_SIZE'
-        ? 'File is too large (max 8MB)'
-        : 'Could not process the uploaded file';
+        ? 'File is too large (max 8MB per file)'
+        : err.code === 'LIMIT_FILE_COUNT'
+        ? `Please upload at most ${MAX_FILES} files`
+        : 'Could not process the uploaded file(s)';
       return res.status(400).json({ error: message });
     }
     next();
@@ -167,9 +169,10 @@ router.patch('/children/:id', requireParent, async (req, res, next) => {
 // Runs the local LLM once to decide which open-ended skills this child
 // needs practice in (see server/lib/llm.js) - no fixed taxonomy, the model
 // reads the parent's notes + grade and proposes however many apply.
-// Accepts an optional document (txt/pdf/image) as extra context. Slow (LLM
-// inference) - the frontend should show a loading state; learningPlanLimiter
-// bounds how often this can be triggered.
+// Accepts up to MAX_FILES optional documents (txt/pdf/image, mixed types
+// allowed) as extra context. Slow (LLM inference, no timeout - see
+// server/lib/llm.js) - the frontend should show a loading state;
+// learningPlanLimiter bounds how often this can be triggered.
 router.post('/children/:id/learning-plan', requireParent, learningPlanLimiter, uploadDocument, async (req, res, next) => {
   try {
     const childId = Number(req.params.id);
@@ -194,20 +197,23 @@ router.post('/children/:id/learning-plan', requireParent, learningPlanLimiter, u
     }
 
     let documentExcerpt = null;
-    let documentImage = null;
+    let documentImages = [];
     let documentFilename = null;
 
-    if (req.file) {
-      documentFilename = req.file.originalname;
-      if (!isSupportedMimeType(req.file.mimetype)) {
-        return res.status(400).json({ error: 'Unsupported file type - please upload a .txt, .pdf, or image (jpg/png/webp)' });
+    const files = req.files || [];
+    if (files.length > 0) {
+      for (const file of files) {
+        if (!isSupportedMimeType(file.mimetype)) {
+          return res.status(400).json({ error: `Unsupported file type (${file.originalname}) - please upload .txt, .pdf, or image (jpg/png/webp) files` });
+        }
+        if (file.mimetype.startsWith('image/') && !config.llmVisionCapable) {
+          return res.status(400).json({ error: 'The current AI model can\'t read images - please upload .txt/.pdf files instead, or paste the details into the notes field' });
+        }
       }
-      if (req.file.mimetype.startsWith('image/') && !config.llmVisionCapable) {
-        return res.status(400).json({ error: 'The current AI model can\'t read images - please upload a .txt or .pdf instead, or paste the details into the notes field' });
-      }
-      const processed = await processDocument(req.file);
-      documentExcerpt = processed.excerpt || null;
-      documentImage = processed.image || null;
+      documentFilename = files.map((f) => f.originalname).join(', ');
+      const processed = await processDocuments(files);
+      documentExcerpt = processed.excerpt;
+      documentImages = processed.images;
     }
 
     const { rows: currentSkills } = await pool.query(
@@ -215,7 +221,7 @@ router.post('/children/:id/learning-plan', requireParent, learningPlanLimiter, u
       [childId]
     );
 
-    const profile = await generateLearningPlan({ grade, notes, documentExcerpt, documentImage, currentSkills });
+    const profile = await generateLearningPlan({ grade, notes, documentExcerpt, documentImages, currentSkills });
 
     const result = await pool.query(
       `INSERT INTO learning_plans
@@ -279,20 +285,23 @@ router.patch('/children/:id/learning-plan/:planId', requireParent, learningPlanL
     }
 
     let documentExcerpt = planResult.rows[0].document_excerpt;
-    let documentImage = null;
+    let documentImages = [];
     let documentFilename = planResult.rows[0].document_filename;
 
-    if (req.file) {
-      documentFilename = req.file.originalname;
-      if (!isSupportedMimeType(req.file.mimetype)) {
-        return res.status(400).json({ error: 'Unsupported file type - please upload a .txt, .pdf, or image (jpg/png/webp)' });
+    const files = req.files || [];
+    if (files.length > 0) {
+      for (const file of files) {
+        if (!isSupportedMimeType(file.mimetype)) {
+          return res.status(400).json({ error: `Unsupported file type (${file.originalname}) - please upload .txt, .pdf, or image (jpg/png/webp) files` });
+        }
+        if (file.mimetype.startsWith('image/') && !config.llmVisionCapable) {
+          return res.status(400).json({ error: 'The current AI model can\'t read images - please upload .txt/.pdf files instead, or paste the details into the notes field' });
+        }
       }
-      if (req.file.mimetype.startsWith('image/') && !config.llmVisionCapable) {
-        return res.status(400).json({ error: 'The current AI model can\'t read images - please upload a .txt or .pdf instead, or paste the details into the notes field' });
-      }
-      const processed = await processDocument(req.file);
-      documentExcerpt = processed.excerpt || null;
-      documentImage = processed.image || null;
+      documentFilename = files.map((f) => f.originalname).join(', ');
+      const processed = await processDocuments(files);
+      documentExcerpt = processed.excerpt;
+      documentImages = processed.images;
     }
 
     const { rows: currentSkills } = await pool.query(
@@ -300,7 +309,7 @@ router.patch('/children/:id/learning-plan/:planId', requireParent, learningPlanL
       [childId]
     );
 
-    const profile = await generateLearningPlan({ grade, notes, documentExcerpt, documentImage, currentSkills });
+    const profile = await generateLearningPlan({ grade, notes, documentExcerpt, documentImages, currentSkills });
 
     const result = await pool.query(
       `UPDATE learning_plans
