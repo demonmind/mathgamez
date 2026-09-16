@@ -54,6 +54,18 @@ router.get('/skills/:slug/progress', requireChild, async (req, res, next) => {
       [req.session.childId, skill.slug, availableStage]
     );
 
+    // Self-heals a stage that never got content: the two-pass generate-
+    // verify pipeline only retries twice before giving up (see llm.js), so
+    // a stage that fails verification both times would otherwise be stuck
+    // in "Preparing..." forever with nothing to ever try again. Checking
+    // back here (e.g. reopening the stage picker) retriggers generation -
+    // safe to call unconditionally since it's a no-op if content already
+    // exists or a generation is already in flight (skillContentAuto.js).
+    const topStage = result.rows[result.rows.length - 1];
+    if (topStage && !topStage.hasContent) {
+      maybeGenerateStageContentForNextStage(req.session.childId, skill.slug).catch(() => {});
+    }
+
     res.json({ availableStage, stages: result.rows });
   } catch (err) {
     next(err);

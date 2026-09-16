@@ -287,7 +287,16 @@ async function generateSkillStageContent({ grade, skill, stage, notes, performan
       return content;
     }
     // Verification failed (or couldn't be parsed) - don't ship unverified
-    // content, try fresh content instead of patching the flagged item.
+    // content, try fresh content instead of patching the flagged item. Log
+    // what specifically failed - a valid {allValid:false} response isn't a
+    // runJsonPrompt-level failure (the JSON was fine), so without this the
+    // only trace of why a stage never got content was a generic "couldn't
+    // produce verified content" error with no detail at all.
+    console.warn(
+      `generateSkillStageContent verification failed (${skill.slug}:stage${stage}, attempt ${regenAttempt + 1}/2) - ` +
+      `issues: ${verification ? JSON.stringify(verification.issues) : '(verification response was unparseable)'}\n` +
+      `content: ${JSON.stringify(content)}`
+    );
   }
 
   const error = new Error("The AI model couldn't produce verified practice content - please try again");
