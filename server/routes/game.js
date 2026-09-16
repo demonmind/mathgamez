@@ -4,6 +4,7 @@ const { requireChild } = require('../middleware/auth');
 const { isValidGameMode, isValidStage } = require('../lib/validate');
 const { maybeAutoRecalibrate } = require('../lib/learningPlanAuto');
 const { getAvailableStage } = require('../lib/gameProgress');
+const { maybeGenerateReadingPassageForNextStage } = require('../lib/readingPassageAuto');
 
 const router = express.Router();
 const PASS_THRESHOLD = 0.85;
@@ -162,7 +163,7 @@ router.post('/attempts/:id/complete', requireChild, async (req, res, next) => {
     await client.query('BEGIN');
 
     const attemptResult = await client.query(
-      `SELECT id, correct_count, incorrect_count
+      `SELECT id, game_mode, correct_count, incorrect_count
        FROM game_stage_attempts
        WHERE id = $1 AND child_id = $2 AND completed_at IS NULL
        FOR UPDATE`,
@@ -174,7 +175,7 @@ router.post('/attempts/:id/complete', requireChild, async (req, res, next) => {
       return res.status(404).json({ error: 'Attempt not found or already completed' });
     }
 
-    const { correct_count: correctCount, incorrect_count: incorrectCount } = attemptResult.rows[0];
+    const { game_mode: gameMode, correct_count: correctCount, incorrect_count: incorrectCount } = attemptResult.rows[0];
     const total = correctCount + incorrectCount;
     const accuracy = total > 0 ? correctCount / total : 0;
     const passed = total > 0 && accuracy >= PASS_THRESHOLD;
@@ -205,6 +206,13 @@ router.post('/attempts/:id/complete', requireChild, async (req, res, next) => {
     // No-ops unless this child already has a plan, opted into auto-adapt,
     // and has enough new completed attempts since the last update.
     maybeAutoRecalibrate(req.session.childId).catch(() => {});
+
+    // Reading completion unlocks the next stage - make sure a passage
+    // actually exists for it (no-ops if one's already there or reading
+    // practice isn't enabled for this child).
+    if (gameMode === 'reading') {
+      maybeGenerateReadingPassageForNextStage(req.session.childId).catch(() => {});
+    }
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);
