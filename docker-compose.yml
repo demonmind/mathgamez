@@ -25,7 +25,13 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     ports:
-      - "${APP_PORT:-3000}:3000"
+      # Bound to loopback only - the Cloudflare Tunnel connects via
+      # localhost on this same host, so nothing legitimate needs this
+      # published more widely. Without the 127.0.0.1 prefix, Docker binds
+      # to every interface (0.0.0.0/::) by default, making the app directly
+      # reachable from the LAN and bypassing Cloudflare's protections and
+      # this app's own IP-based rate limiting entirely.
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
     # Lets the container resolve host.docker.internal to the host machine -
     # needed to reach a locally-running LLM server (see LLM_API_BASE_URL).
     # Works on Linux Docker Engine 20.10+, not just Docker Desktop.

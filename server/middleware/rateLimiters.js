@@ -67,6 +67,17 @@ const learningPlanLimiter = rateLimit({
   message: { error: 'Too many plan requests, please wait a bit and try again' },
 });
 
+// Unauthenticated-by-design (powers the kid avatar picker before login),
+// but that means nothing else stops it being hammered to enumerate live
+// family codes or scrape children's names/avatars across the instance.
+const familyLookupLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts, please wait a few minutes and try again' },
+});
+
 module.exports = {
   parentLoginLimiter,
   parentSignupLimiter,
@@ -75,4 +86,5 @@ module.exports = {
   adminLoginLimiter,
   videoSearchLimiter,
   learningPlanLimiter,
+  familyLookupLimiter,
 };
