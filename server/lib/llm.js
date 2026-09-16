@@ -126,14 +126,22 @@ async function callChatCompletion(messages, { forceThinking } = {}) {
 
 // Generic "ask for JSON matching a schema, retry once if it doesn't parse
 // or validate" loop, shared by every LLM call in this file - never
-// silently accepts malformed output.
-async function runJsonPrompt(messages, isValidFn, retryReminder, opts) {
+// silently accepts malformed output. label is just for logging, so a
+// final failure (both attempts exhausted) is actually diagnosable instead
+// of silently discarding the model's last response. normalizeFn (optional)
+// runs on the parsed JSON before validation - for fixing up cosmetic
+// model quirks (e.g. a slightly-off emoji) that shouldn't fail an entire
+// otherwise-good response.
+async function runJsonPrompt(messages, isValidFn, retryReminder, opts, label, normalizeFn) {
+  let lastRaw = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     const raw = await callChatCompletion(messages, opts);
+    lastRaw = raw;
     const jsonText = stripCodeFence(raw);
     let parsed;
     try {
       parsed = JSON.parse(jsonText);
+      if (parsed && normalizeFn) parsed = normalizeFn(parsed);
     } catch (err) {
       parsed = null;
     }
@@ -145,10 +153,48 @@ async function runJsonPrompt(messages, isValidFn, retryReminder, opts) {
     messages.push({ role: 'assistant', content: raw });
     messages.push({ role: 'user', content: retryReminder });
   }
+  console.error(`runJsonPrompt exhausted retries${label ? ` (${label})` : ''} - last raw response:\n${(lastRaw || '').slice(0, 2000)}`);
   return null;
 }
 
 const RETRY_REMINDER = 'That was not valid JSON matching the exact schema. Respond again with ONLY the JSON object, no other text.';
+
+const DEFAULT_SKILL_ICON = '🧩';
+
+// Multi-codepoint emoji (⏰➖✖️➗🗣️ etc.) are notoriously inconsistent for
+// models to reproduce byte-for-byte even when told to copy one verbatim -
+// a single skill with an off-by-a-variation-selector icon shouldn't fail
+// an otherwise good plan and force a full regeneration. Swap in a default
+// rather than rejecting; also tolerates minor slug formatting slips
+// (uppercase, spaces/underscores, a trailing separator) instead of
+// treating a cosmetic slip as a hard failure - the exact-match regex in
+// validate.js still gets the final say after this runs.
+function normalizeSkillsProfile(profile) {
+  if (!profile || !Array.isArray(profile.skills)) return profile;
+  return {
+    ...profile,
+    skills: profile.skills.map((skill) => {
+      if (!skill || typeof skill !== 'object') return skill;
+      const normalized = { ...skill };
+      if (typeof normalized.slug === 'string') {
+        let slug = normalized.slug
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '');
+        // Must start with a letter (e.g. a model-generated "4th-grade-
+        // vocabulary" is otherwise a perfectly reasonable slug) - prefix
+        // rather than reject.
+        if (/^[0-9]/.test(slug)) slug = `skill-${slug}`;
+        normalized.slug = slug.slice(0, 32);
+      }
+      if (!SKILL_ICON_ALLOWLIST.includes(normalized.icon)) {
+        normalized.icon = DEFAULT_SKILL_ICON;
+      }
+      return normalized;
+    }),
+  };
+}
 
 // documentImages (optional): [{ base64, mimeType }, ...] - each sent as an
 // image content part for vision-capable models (see config.llmVisionCapable).
@@ -184,7 +230,7 @@ async function generateLearningPlan({ grade, notes, documentExcerpt, documentIma
 
   const messages = [{ role: 'system', content: skillsSystemPrompt() }, userMessage];
 
-  const profile = await runJsonPrompt(messages, isValidLearningPlanProfile, RETRY_REMINDER);
+  const profile = await runJsonPrompt(messages, isValidLearningPlanProfile, RETRY_REMINDER, undefined, 'generateLearningPlan', normalizeSkillsProfile);
   if (!profile) {
     const error = new Error("The AI model didn't return a usable plan - please try again");
     error.status = 422;
@@ -217,7 +263,9 @@ async function generateSkillStageContent({ grade, skill, stage, notes, performan
     const content = await runJsonPrompt(
       genMessages,
       isValidSkillStageContent,
-      'That was not valid JSON matching the exact schema (title, sharedContext, and questions with exactly 4 items, each with question/options[4]/correctIndex). Respond again with ONLY the JSON object.'
+      'That was not valid JSON matching the exact schema (title, sharedContext, and questions with exactly 4 items, each with question/options[4]/correctIndex). Respond again with ONLY the JSON object.',
+      undefined,
+      `generateSkillStageContent:${skill.slug}:stage${stage}:generate`
     );
     if (!content) continue;
 
@@ -231,7 +279,8 @@ async function generateSkillStageContent({ grade, skill, stage, notes, performan
       verifyMessages,
       isValidSkillVerification,
       'Respond again with ONLY the JSON object: {"allValid": true|false, "issues": [...]}.',
-      { forceThinking: content.sharedContext === null }
+      { forceThinking: content.sharedContext === null },
+      `generateSkillStageContent:${skill.slug}:stage${stage}:verify`
     );
 
     if (verification && verification.allValid) {
