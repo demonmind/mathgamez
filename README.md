@@ -115,6 +115,11 @@ their gameplay (it doesn't merge with the previous one) - the dashboard
 keeps every earlier plan under "Earlier plans" so you can bring back an
 older set of notes if a new plan wasn't what you meant to change.
 
+Every plan (current or earlier) also has an **"Edit this prompt"** button -
+unlike generating a new plan, this updates that same plan's grade/notes in
+place and re-runs the LLM on the edited text. It becomes the active plan
+again immediately, even if you edited one from "Earlier plans."
+
 ## Watch-a-video reward redemption
 
 Besides the parent's manual "Mark as Redeemed" button, a kid can spend their
