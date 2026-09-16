@@ -78,47 +78,56 @@ This is a deliberate simplicity tradeoff (plain SQL init scripts instead of
 a migration framework) - fine for a small self-hosted instance, but worth
 revisiting if the schema starts changing often.
 
-## AI-generated learning plans & Story Cove
+## AI-generated learning plans & skill tiles
 
-A parent can describe what a child struggles with (plus an optional
-document - text, PDF, or a photo for vision-capable models) on the
-dashboard, and a locally-run LLM (any OpenAI-compatible
-`/chat/completions` endpoint - llama.cpp's server, vLLM, etc; see
-`LLM_API_BASE_URL`) returns a small, strictly-validated set of tuning
-knobs. Critically, **the model never writes or grades math itself** - it
-only adjusts parameters (number ranges, how much to emphasize subtraction,
-starting stage, etc.) that bias the existing deterministic question
-generators in `public/js/game.js`.
+A parent describes what a child struggles with (plus an optional document -
+text, PDF, or a photo for vision-capable models) on the dashboard, and a
+locally-run LLM (any OpenAI-compatible `/chat/completions` endpoint -
+llama.cpp's server, vLLM, etc; see `LLM_API_BASE_URL`) decides which
+**skills** apply to this child - there's no fixed taxonomy of practice
+areas, since different grades and kids need different programs. Each skill
+becomes one tile in the game (`GET /api/game/learning-plan`), and a child
+with no plan yet simply sees no tiles.
 
-If a plan flags `includeReadingPractice`, that also kicks off a background
-job that writes a **Story Cove** reading passage: a short age-appropriate
-story plus 4 multiple-choice comprehension questions. Since there's no
-deterministic correctness check for reading comprehension the way there is
-for arithmetic, this uses a **two-pass generate-then-verify** pattern
-(`server/lib/llm.js`): one LLM call writes the passage and answer key, a
-*second, independent* call is given only the passage and the proposed
-answer key and checks whether each marked-correct answer is actually
-supported by the text. If verification fails, the whole passage is
-regenerated from scratch (up to 2 attempts) - nothing is published
-unverified. This runs automatically, with no parent approval step, but
-every plan and passage is visible on the dashboard.
+Every stage of every skill is itself AI-generated content (a short shared
+passage plus 4 multiple-choice questions for reading/language skills, or 4
+fully self-contained questions for everything else - arithmetic, spelling,
+telling time, etc.), written and cached once, then replayed. **This is a
+deliberate step down from an earlier design where math was 100%
+deterministic** - the model can occasionally get an arithmetic answer key
+wrong the same way it can misjudge anything else. The mitigation is a
+**two-pass generate-then-verify** pattern (`server/lib/llm.js`): one call
+writes the stage's content, a *second, independent* call re-derives each
+answer from scratch (actually computing it for math-like content, not just
+checking comprehension) before it ships; if verification fails, the whole
+stage is regenerated (up to 2 attempts) - nothing unverified is shown to a
+child. The verification pass re-enables the model's "thinking" mode
+specifically for non-passage content, trading latency for a better shot at
+catching a wrong computation (see `forceThinking` in `llm.js`).
 
-A background job also periodically **re-calibrates** an existing plan
-using the child's actual recent accuracy (not a parent's words) - see
-`LEARNING_PLAN_AUTO_RECAL_THRESHOLD` and the per-child "auto-adjust"
-toggle on the dashboard. None of this ever blocks gameplay: every LLM call
-here is triggered fire-and-forget from a route that already returned its
-response to the child.
+Passing a stage requires 90% accuracy and stages are uncapped - difficulty
+scales relative to a child's own recent accuracy in that skill (fed into
+each new stage's generation call), not a fixed table. Already-passed
+stages are shown with a checkmark in the stage picker, distinct from
+unlocked-but-not-yet-tried ones.
 
-Generating a new plan for a child **replaces** what's currently tuning
-their gameplay (it doesn't merge with the previous one) - the dashboard
-keeps every earlier plan under "Earlier plans" so you can bring back an
-older set of notes if a new plan wasn't what you meant to change.
+A background job also periodically **re-calibrates** an existing plan's
+skill list using the child's actual recent accuracy (not just a parent's
+words) - see `LEARNING_PLAN_AUTO_RECAL_THRESHOLD` and the per-child
+"auto-adjust" toggle on the dashboard. None of this ever blocks gameplay:
+every LLM call here is triggered fire-and-forget from a route that already
+returned its response to the child.
 
-Every plan (current or earlier) also has an **"Edit this prompt"** button -
-unlike generating a new plan, this updates that same plan's grade/notes in
-place and re-runs the LLM on the edited text. It becomes the active plan
-again immediately, even if you edited one from "Earlier plans."
+Generating a new plan **replaces** the child's active skill list (it
+doesn't merge with the previous one) - a skill the new plan still covers
+keeps its exact slug and all its stage history/content; a skill dropped
+from the new plan simply stops appearing as a tile, its history isn't
+deleted. The dashboard keeps every earlier plan under "Earlier plans" so
+you can bring back an older set of notes if a new plan wasn't what you
+meant to change, and every plan (current or earlier) has an **"Edit this
+prompt"** button - unlike generating a new plan, this updates that same
+plan's grade/notes in place and re-runs the LLM on the edited text,
+becoming the active plan again immediately.
 
 ## Watch-a-video reward redemption
 

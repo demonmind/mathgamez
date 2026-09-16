@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Number Quest — Rounding & Adding Cove</title>
-<link rel="stylesheet" href="/css/theme.css?v=8">
-<link rel="stylesheet" href="/css/game.css?v=8">
+<title>Number Quest — Play</title>
+<link rel="stylesheet" href="/css/theme.css?v=9">
+<link rel="stylesheet" href="/css/game.css?v=9">
 </head>
 <body>
 <div class="wrap">
@@ -13,7 +13,7 @@
   <header>
     <span class="flag">Ahoy, Number Explorer!</span>
     <h1>Number <span>Quest</span></h1>
-    <p class="sub">Round numbers and add up your treasure to fill the chest!</p>
+    <p class="sub">Pick a quest and fill the chest with correct answers!</p>
   </header>
 
   <div class="card">
@@ -25,23 +25,8 @@
 
     <!-- MODE SELECT -->
     <div id="screen-select">
-      <div class="modes">
-        <button class="mode-btn round" data-mode="round">
-          <span class="mode-icon">🧭</span>
-          <p class="mode-title">Round Up Cove</p>
-          <p class="mode-desc">Round numbers to the nearest 10 or 100 — 3 stages, gets tougher!</p>
-        </button>
-        <button class="mode-btn addsub" data-mode="addsub">
-          <span class="mode-icon">🗺️</span>
-          <p class="mode-title">Treasure Math</p>
-          <p class="mode-desc">Add and subtract three numbers — 3-digit and challenge stages ahead!</p>
-        </button>
-        <button class="mode-btn reading" data-mode="reading">
-          <span class="mode-icon">📖</span>
-          <p class="mode-title">Story Cove</p>
-          <p class="mode-desc">Read a short story and answer questions about it!</p>
-        </button>
-      </div>
+      <div class="modes" id="skillTiles"></div>
+      <p id="noSkillsMsg" class="form-note hidden">No practice quests yet — ask a grown-up to set one up from the Family Dashboard!</p>
       <button type="button" class="stage-btn watch-video-btn hidden" id="watchVideoBtn">
         <p class="stage-title">🎬 Watch a Video</p>
         <p class="stage-desc">Spend your <span id="watchVideoBalance">0</span> treasure minutes on an approved video</p>
@@ -54,11 +39,11 @@
       <div class="stage-list" id="stageList"></div>
     </div>
 
-    <!-- STORY COVE: read the passage before questions start -->
-    <div id="screen-reading-passage" class="hidden">
-      <button class="back-btn" id="backFromPassageBtn" style="margin-bottom:16px;">← Change quest</button>
-      <h2 id="passageTitle" class="passage-title"></h2>
-      <div id="passageText" class="passage-text"></div>
+    <!-- Shared context (e.g. a reading passage) before questions start -->
+    <div id="screen-content-preview" class="hidden">
+      <button class="back-btn" id="backFromPreviewBtn" style="margin-bottom:16px;">← Change quest</button>
+      <h2 id="contentPreviewTitle" class="passage-title"></h2>
+      <div id="contentPreviewText" class="passage-text"></div>
       <div class="answer-row">
         <button class="submit-btn" id="startQuestionsBtn">I'm Ready for Questions →</button>
       </div>
@@ -114,36 +99,16 @@
 
       <div class="chest-track"><div class="chest-fill" id="chestFill"></div></div>
 
-      <details id="passageRecapWrap" class="hidden" style="margin-bottom:14px;">
-        <summary style="cursor:pointer; color: var(--sea-foam);">📖 Re-read the story</summary>
-        <div id="passageRecapText" class="passage-text" style="margin-top:8px;"></div>
+      <details id="contentRecapWrap" class="hidden" style="margin-bottom:14px;">
+        <summary style="cursor:pointer; color: var(--sea-foam);">📖 Re-read this</summary>
+        <div id="contentRecapText" class="passage-text" style="margin-top:8px;"></div>
       </details>
 
       <div class="question-area">
-        <p class="q-label" id="qLabel">Round to the nearest 10:</p>
-        <div class="q-value" id="qValue">47</div>
+        <p class="q-label question-text" id="qLabel">Loading…</p>
       </div>
 
-      <!-- rounding choices -->
-      <div id="choicesArea" class="choices hidden"></div>
-
-      <!-- add/sub input: vertical column form so carrying/borrowing is visible -->
-      <div id="inputArea" class="hidden">
-        <p class="regroup-hint" id="regroupHint">Dashed boxes are for carrying — fill them in as you go!</p>
-        <div class="column-math" id="columnMathWrap">
-          <table class="col-table" id="colTable"></table>
-        </div>
-        <!-- Stage 3 missing-number puzzles use a single equation box instead of the column grid -->
-        <div id="singleValueWrap" class="hidden">
-          <div class="answer-row">
-            <input id="missingInput" class="answer-input" type="text" inputmode="numeric" readonly placeholder="?">
-          </div>
-        </div>
-        <div class="keypad" id="keypad"></div>
-        <div class="answer-row">
-          <button class="submit-btn" id="submitBtn">Check ✓</button>
-        </div>
-      </div>
+      <div id="choicesArea" class="choices"></div>
 
       <p class="feedback" id="feedback"></p>
     </div>
@@ -159,10 +124,10 @@
 
   </div>
 
-  <footer>Fill the chest with correct answers to clear a stage — there are 3 stages to master!</footer>
+  <footer>Fill the chest with correct answers to clear a stage — new stages keep unlocking as you go!</footer>
 </div>
 
-<script src="/js/api.js?v=8"></script>
-<script src="/js/game.js?v=8"></script>
+<script src="/js/api.js?v=9"></script>
+<script src="/js/game.js?v=9"></script>
 </body>
 </html>

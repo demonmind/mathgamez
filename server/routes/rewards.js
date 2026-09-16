@@ -17,11 +17,12 @@ router.get('/child/:id', requireChildOrOwningParent, async (req, res, next) => {
 
     const historyResult = await pool.query(
       `SELECT rl.id, rl.minutes, rl.reason, rl.redeemed, rl.redeemed_at, rl.created_at,
-              rl.redeemed_by_child_id, gsa.game_mode, gsa.stage,
+              rl.redeemed_by_child_id, gsa.game_mode, gsa.stage, cs.title AS skill_title,
               COALESCE(av.title, rl.redeemed_search_title) AS watched_video_title,
               (rl.redeemed_search_title IS NOT NULL) AS watched_via_search
        FROM reward_ledger rl
        LEFT JOIN game_stage_attempts gsa ON gsa.id = rl.source_attempt_id
+       LEFT JOIN child_skills cs ON cs.child_id = rl.child_id AND cs.slug = gsa.game_mode
        LEFT JOIN allowed_videos av ON av.id = rl.redeemed_video_id
        WHERE rl.child_id = $1
        ORDER BY rl.created_at DESC

@@ -11,7 +11,16 @@ function formatDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-const MODE_LABELS = { round: 'Round Up Cove', addsub: 'Treasure Math', reading: 'Story Cove' };
+// Legacy fixed-mode rows predate the AI-decided skill system - current
+// rows carry their own human title via a child_skills join (skill_title),
+// this is only a fallback for old history and for a since-deactivated
+// skill with no matching child_skills row any more.
+const LEGACY_MODE_LABELS = { round: 'Round Up Cove', addsub: 'Treasure Math', reading: 'Story Cove' };
+function modeLabel(gameMode, skillTitle) {
+  if (skillTitle) return skillTitle;
+  if (!gameMode) return null;
+  return LEGACY_MODE_LABELS[gameMode] || gameMode.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 async function loadDashboard() {
   try {
@@ -144,10 +153,15 @@ function renderPlanSummary(el, plan) {
   const trigger = plan.generated_by === 'auto' && plan.trigger_summary
     ? `<details style="margin-top:4px;"><summary style="cursor:pointer; font-size:12px; color: var(--sea-foam);">Why it changed</summary><pre class="form-note" style="white-space:pre-wrap; font-family:inherit;">${escapeHtml(plan.trigger_summary)}</pre></details>`
     : '';
+  const skills = (p && p.skills) || [];
+  const skillChips = skills.map((s) => `
+    <span class="skill-chip">${escapeHtml(s.icon)} <strong>${escapeHtml(s.title)}</strong> - ${escapeHtml(s.description)}</span>
+  `).join('');
+
   el.innerHTML = `
     <p class="form-note" style="color: var(--gold);">Latest plan (${formatDate(plan.created_at)}, grade ${escapeHtml(plan.grade)})${autoBadge}:</p>
     <p class="form-note">${escapeHtml(p.focusSummary)}</p>
-    <p class="form-note">Mode: ${escapeHtml(p.recommendedMode)} · Suggested stage: ${p.recommendedStartingStage} · Range: ${escapeHtml(p.numberRangeAdjustment)}</p>
+    <div class="skill-chip-list">${skillChips || '<span class="form-note">No skills in this plan.</span>'}</div>
     ${trigger}
     <button type="button" class="small-btn" data-action="editPlan" data-plan-id="${plan.id}"
       data-grade="${escapeHtml(plan.grade)}" data-notes="${escapeHtml(plan.parent_notes)}" style="margin-top:6px;">Edit this prompt</button>
@@ -210,7 +224,7 @@ async function loadChildRewards(childId, card) {
       const rows = data.history.map((h) => `
         <tr>
           <td>${formatDate(h.created_at)}</td>
-          <td>${h.game_mode ? MODE_LABELS[h.game_mode] : '—'}${h.stage ? ` (Stage ${h.stage})` : ''}</td>
+          <td>${modeLabel(h.game_mode, h.skill_title) ? escapeHtml(modeLabel(h.game_mode, h.skill_title)) : '—'}${h.stage ? ` (Stage ${h.stage})` : ''}</td>
           <td>${h.minutes} min</td>
           <td class="${h.redeemed ? 'redeemed-badge' : 'unredeemed-badge'}">${
             h.redeemed

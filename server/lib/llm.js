@@ -1,42 +1,46 @@
 const config = require('../config/env');
-const { isValidLearningPlanProfile, isValidReadingPassage, isValidReadingVerification } = require('./validate');
+const { isValidLearningPlanProfile, isValidSkillStageContent, isValidSkillVerification, SKILL_ICON_ALLOWLIST } = require('./validate');
 
-const SYSTEM_PROMPT = `You are helping tune a children's practice app called Number Quest (ages ~5-10, grades K-6). It has three practice areas: "round" (rounding numbers), "addsub" (3-number addition/subtraction), and "reading" (short reading passages with comprehension questions). Math questions are generated deterministically by the app's own code and reading passages are generated separately (you never write math questions/answers here). Your only job here is to output a small JSON object of tuning knobs based on the child's grade and what the parent says they struggle with, plus a short plain-language note for the parent.
+function skillsSystemPrompt() {
+  return `You are helping personalize a children's practice app called Number Quest (ages ~5-10, grades K-6). There is no fixed list of practice areas - your job is to read the parent's description of what their child struggles with (plus their grade, and any uploaded document) and decide which distinct SKILLS this child needs practice in. A skill can be anything grade-appropriate: a math topic (rounding, addition, subtraction, multiplication, fractions, telling time, money...), reading/language comprehension, spelling, vocabulary, or anything else a parent might reasonably describe. Different grades need different programs - do not assume any particular skill is always relevant.
 
-Respond with ONLY a single JSON object, no markdown code fences, no commentary before or after. It must have exactly these fields:
+Every stage of every skill you choose will later be generated fresh by another AI call and shown to the child as a 4-question multiple-choice quiz, so the skill itself doesn't need to fully specify content - just clearly name and describe the practice area.
+
+Respond with ONLY a single JSON object, no markdown code fences, no commentary before or after:
 {
-  "recommendedMode": "round" | "addsub" | "both",
-  "recommendedStartingStage": 1 | 2 | 3,
-  "subtractionEmphasis": <number between 0 and 1, how much to favor subtraction over addition practice>,
-  "extraWordProblems": <true or false>,
-  "numberRangeAdjustment": "smaller" | "standard" | "larger",
-  "includeReadingPractice": <true if the parent's description suggests reading/comprehension practice would help this child, even if their main struggle isn't math - false otherwise>,
+  "skills": [
+    {
+      "slug": "<a short kebab-case identifier, 2-32 chars, lowercase letters/digits/hyphens only, starting with a letter, e.g. "rounding-numbers">",
+      "title": "<short human-readable title, e.g. "Rounding Numbers">",
+      "description": "<one sentence describing exactly what this skill covers and at what level>",
+      "icon": "<copy EXACTLY one of these emoji, verbatim: ${SKILL_ICON_ALLOWLIST.join(' ')}>",
+      "recommendedStartingStage": <a positive integer, usually 1, higher only if the parent's notes suggest this child is already ahead in this specific skill>
+    }
+  ],
   "focusSummary": "<1-3 short sentences in plain language for the parent explaining your recommendation>"
-}`;
+}
+Choose between 1 and 6 skills - as many as genuinely apply, no filler. If a CURRENT SKILL LIST is given below, and one of your skills covers the same underlying concept as an existing entry, you MUST reuse its exact "slug" and "title" unchanged so the child's progress in that skill carries forward - only mint a new slug for a genuinely new focus area. A skill you decide is no longer relevant should simply be omitted from your output - do not include it just to preserve history.`;
+}
 
-const READING_VERIFY_SYSTEM_PROMPT = `You are fact-checking a children's reading comprehension quiz. You will be given a passage and a set of multiple-choice questions with a marked correct answer for each. For each question, verify: (1) the marked correct answer is actually and unambiguously supported by the passage text, and (2) none of the other three options could also reasonably be considered correct or arguable. Respond with ONLY a single JSON object, no markdown code fences, no commentary:
+const SKILL_VERIFY_SYSTEM_PROMPT = `You are fact-checking a children's practice quiz. You will be given the skill it's for, an optional shared passage, and 4 multiple-choice questions with a marked correct answer each. For each question: if a passage is given, verify the marked answer is unambiguously supported by it; if no passage is given (e.g. a math question), INDEPENDENTLY work out the answer yourself, step by step, before checking - do not just trust the label. Also verify none of the other three options could reasonably be argued correct. Respond with ONLY a single JSON object, no markdown code fences, no commentary:
 {
   "allValid": <true only if every question passes both checks, false otherwise>,
   "issues": [<0-based indices of any question that failed either check - empty array if allValid is true>]
 }`;
 
-function readingGenerateSystemPrompt(stage) {
-  const lengthGuide = {
-    1: 'short and simple (about 60-100 words), simple sentences, a clear beginning/middle/end',
-    2: 'medium length (about 120-200 words), a bit more complex sentence structure and vocabulary',
-    3: 'longer (about 200-350 words), richer vocabulary, and may require some inference beyond what is stated directly',
-  }[stage] || 'short and simple (about 60-100 words)';
+function skillContentGenerateSystemPrompt(skill, stage) {
+  return `You are writing practice content for a children's learning app, for the skill "${skill.title}" (${skill.description}). This is stage ${stage} for this child - stage 1 is introductory, and there is no fixed maximum stage, so each stage after the first should be moderately harder than the one before it. If you are given a performance summary below, use it to judge how much harder to make this stage; if not, use standard age/grade-appropriate difficulty for stage ${stage}.
 
-  return `You are writing a short reading passage and comprehension quiz for a children's reading practice app. Write ONE original, wholesome, age-appropriate passage (a simple story or a nonfiction topic a child would find interesting - animals, adventure, friendship, nature, space, etc.) that is ${lengthGuide}. Never include anything scary, violent, sad, or otherwise inappropriate for a young child.
+If this skill is about reading, writing, or language comprehension, write ONE short original age-appropriate passage and set "sharedContext" to it; all 4 questions must then be answerable directly from that passage. For every other kind of skill (arithmetic, fractions, telling time, spelling, vocabulary, etc.), set "sharedContext" to null and make each of the 4 "questions" fully self-contained - put the whole problem, including any word-problem wording or the actual expression to solve, directly in that item's "question" field. Never include anything scary, violent, sad, or otherwise inappropriate for a young child.
 
-Then write exactly 4 multiple-choice comprehension questions about the passage. Each question must have exactly 4 answer options with exactly one clearly correct answer directly supported by the passage text - avoid ambiguous or trick questions.
+Each question needs exactly 4 answer options with exactly one clearly, unambiguously correct answer - avoid ambiguous or trick questions. For arithmetic or any question with a computable answer, work the problem out carefully yourself before writing the answer key.
 
 Respond with ONLY a single JSON object, no markdown code fences, no commentary. Schema:
 {
-  "title": "<short title>",
-  "passageText": "<the passage>",
+  "title": "<short title for this stage>",
+  "sharedContext": "<the passage, or null>",
   "questions": [
-    {"question": "<question text>", "options": ["<option 1>", "<option 2>", "<option 3>", "<option 4>"], "correctIndex": <0, 1, 2, or 3>}
+    {"question": "<self-contained question or prompt>", "options": ["<option 1>", "<option 2>", "<option 3>", "<option 4>"], "correctIndex": <0, 1, 2, or 3>}
   ]
 }
 "questions" must contain exactly 4 items.`;
@@ -50,9 +54,17 @@ function stripCodeFence(text) {
   return match ? match[1].trim() : trimmed;
 }
 
-async function callChatCompletion(messages) {
+// forceThinking: used for the math/other-non-passage verification pass,
+// where the verifier has to actually COMPUTE an answer rather than check
+// text comprehension - enable_thinking is otherwise disabled globally for
+// latency (see config.llmDisableThinking), but arithmetic is a known weak
+// spot for a small local model answering "from the hip", so this trades
+// latency for a real shot at catching a wrong answer key on that one call.
+async function callChatCompletion(messages, { forceThinking } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.llmTimeoutMs);
+
+  const disableThinking = config.llmDisableThinking && !forceThinking;
 
   let response;
   try {
@@ -68,10 +80,10 @@ async function callChatCompletion(messages) {
         temperature: 0.2,
         // Some Qwen3 builds default to an internal "thinking" pass before
         // answering, which can run to 1000+ tokens and take well over a
-        // minute on an ambiguous/off-topic prompt - we only want the final
-        // JSON, not a reasoning trace, so turn it off. Harmless no-op on
-        // servers/models that don't recognize this field.
-        ...(config.llmDisableThinking ? { chat_template_kwargs: { enable_thinking: false } } : {}),
+        // minute on an ambiguous/off-topic prompt - normally we only want
+        // the final JSON, not a reasoning trace, so turn it off. Harmless
+        // no-op on servers/models that don't recognize this field.
+        ...(disableThinking ? { chat_template_kwargs: { enable_thinking: false } } : {}),
       }),
       signal: controller.signal,
     });
@@ -106,9 +118,9 @@ async function callChatCompletion(messages) {
 // Generic "ask for JSON matching a schema, retry once if it doesn't parse
 // or validate" loop, shared by every LLM call in this file - never
 // silently accepts malformed output.
-async function runJsonPrompt(messages, isValidFn, retryReminder) {
+async function runJsonPrompt(messages, isValidFn, retryReminder, opts) {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const raw = await callChatCompletion(messages);
+    const raw = await callChatCompletion(messages, opts);
     const jsonText = stripCodeFence(raw);
     let parsed;
     try {
@@ -132,12 +144,18 @@ const RETRY_REMINDER = 'That was not valid JSON matching the exact schema. Respo
 // documentImage (optional): { base64, mimeType } - sent as an image content
 // part for vision-capable models (see config.llmVisionCapable). Mutually
 // exclusive with documentExcerpt (text extracted from a PDF/text upload).
-async function generateLearningPlan({ grade, notes, documentExcerpt, documentImage }) {
+// currentSkills (optional): the child's currently-active skills
+// (child_skills rows), given so the model can reuse a matching slug
+// instead of minting a new one for the same underlying concept.
+async function generateLearningPlan({ grade, notes, documentExcerpt, documentImage, currentSkills }) {
   const textContent = [
     `Child's grade: ${grade}`,
     `Parent's description of what the child struggles with: ${notes}`,
     documentExcerpt ? `\nAdditional context from an uploaded document:\n${documentExcerpt}` : '',
     documentImage ? '\n(An image of a document was also attached - use it as additional context.)' : '',
+    currentSkills && currentSkills.length > 0
+      ? `\nCURRENT SKILL LIST for this child (reuse a slug/title below if a new skill covers the same concept):\n${currentSkills.map((s) => `- slug: "${s.slug}", title: "${s.title}" - ${s.description}`).join('\n')}`
+      : '',
   ].join('\n');
 
   const userMessage = documentImage
@@ -150,7 +168,7 @@ async function generateLearningPlan({ grade, notes, documentExcerpt, documentIma
       }
     : { role: 'user', content: textContent };
 
-  const messages = [{ role: 'system', content: SYSTEM_PROMPT }, userMessage];
+  const messages = [{ role: 'system', content: skillsSystemPrompt() }, userMessage];
 
   const profile = await runJsonPrompt(messages, isValidLearningPlanProfile, RETRY_REMINDER);
   if (!profile) {
@@ -161,52 +179,57 @@ async function generateLearningPlan({ grade, notes, documentExcerpt, documentIma
   return profile;
 }
 
-// Two independent LLM passes: generate the passage+quiz, then a SEPARATE
-// call (given only the passage and answer key, not the original generation
-// context) checks the answer key is actually correct. If verification
-// fails, the whole passage is regenerated from scratch, up to 2 times -
-// this is the safety net standing in for a deterministic checker, since
-// there isn't one for reading comprehension the way there is for
-// arithmetic. Never returns unverified content.
-async function generateReadingPassage({ grade, stage, notes }) {
+// Two independent LLM passes: generate the stage content, then a SEPARATE
+// call (given only the skill, optional shared context, and answer key -
+// not the original generation context) checks the answer key is actually
+// correct. If verification fails, the whole stage is regenerated from
+// scratch, up to 2 times - this is the safety net standing in for a
+// deterministic checker, since content is now AI-authored for every skill
+// (math included), not just reading. Never returns unverified content.
+async function generateSkillStageContent({ grade, skill, stage, notes, performanceSummary }) {
   const userContent = [
     `Child's grade: ${grade}`,
-    `Stage: ${stage} (1 = simplest, 3 = most advanced)`,
-    `What this child is working on / struggles with: ${notes}`,
+    `Skill: ${skill.title} - ${skill.description}`,
+    `Stage: ${stage} (1 = simplest; no fixed maximum)`,
+    `What this child is working on / struggles with (from the parent): ${notes}`,
+    performanceSummary ? `\nThis child's recent performance in this skill:\n${performanceSummary}` : '',
   ].join('\n');
 
   for (let regenAttempt = 0; regenAttempt < 2; regenAttempt++) {
     const genMessages = [
-      { role: 'system', content: readingGenerateSystemPrompt(stage) },
+      { role: 'system', content: skillContentGenerateSystemPrompt(skill, stage) },
       { role: 'user', content: userContent },
     ];
-    const passage = await runJsonPrompt(
+    const content = await runJsonPrompt(
       genMessages,
-      isValidReadingPassage,
-      'That was not valid JSON matching the exact schema (title, passageText, and questions with exactly 4 items, each with question/options[4]/correctIndex). Respond again with ONLY the JSON object.'
+      isValidSkillStageContent,
+      'That was not valid JSON matching the exact schema (title, sharedContext, and questions with exactly 4 items, each with question/options[4]/correctIndex). Respond again with ONLY the JSON object.'
     );
-    if (!passage) continue;
+    if (!content) continue;
 
     const verifyMessages = [
-      { role: 'system', content: READING_VERIFY_SYSTEM_PROMPT },
-      { role: 'user', content: JSON.stringify({ passageText: passage.passageText, questions: passage.questions }) },
+      { role: 'system', content: SKILL_VERIFY_SYSTEM_PROMPT },
+      { role: 'user', content: JSON.stringify({ skill: skill.title, sharedContext: content.sharedContext, questions: content.questions }) },
     ];
+    // Force real "thinking" for the verify pass on non-passage (math/other
+    // computable) content - see callChatCompletion's forceThinking comment.
     const verification = await runJsonPrompt(
       verifyMessages,
-      isValidReadingVerification,
-      'Respond again with ONLY the JSON object: {"allValid": true|false, "issues": [...]}.'
+      isValidSkillVerification,
+      'Respond again with ONLY the JSON object: {"allValid": true|false, "issues": [...]}.',
+      { forceThinking: content.sharedContext === null }
     );
 
     if (verification && verification.allValid) {
-      return passage;
+      return content;
     }
     // Verification failed (or couldn't be parsed) - don't ship unverified
-    // content, try a fresh passage instead of patching the flagged item.
+    // content, try fresh content instead of patching the flagged item.
   }
 
-  const error = new Error("The AI model couldn't produce a verified reading passage - please try again");
+  const error = new Error("The AI model couldn't produce verified practice content - please try again");
   error.status = 422;
   throw error;
 }
 
-module.exports = { generateLearningPlan, generateReadingPassage };
+module.exports = { generateLearningPlan, generateSkillStageContent };

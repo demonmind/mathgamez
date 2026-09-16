@@ -16,10 +16,15 @@
 }
 .mode-btn:hover{ transform: translateY(-3px); }
 .mode-btn:active{ transform: translateY(1px); }
-.mode-btn.round{ background: linear-gradient(160deg, var(--sand), #E9924A); box-shadow: 0 6px 0 #B5652A; }
-.mode-btn.addsub{ background: linear-gradient(160deg, #9DE0C8, var(--good)); box-shadow: 0 6px 0 #1E7267; }
-.mode-btn.reading{ background: linear-gradient(160deg, var(--sea-foam), #4A90B8); box-shadow: 0 6px 0 #2E6E93; }
-@media(min-width:480px){ .mode-btn.reading{ grid-column: 1 / -1; } }
+/* Skill tiles are AI-decided per child (no fixed set), so they can't be
+   hand-colored by name - cycle through a small fixed palette by position
+   instead, so tiles still look visually distinct from each other. */
+.skill-tile:nth-child(6n+1){ background: linear-gradient(160deg, var(--sand), #E9924A); box-shadow: 0 6px 0 #B5652A; }
+.skill-tile:nth-child(6n+2){ background: linear-gradient(160deg, #9DE0C8, var(--good)); box-shadow: 0 6px 0 #1E7267; }
+.skill-tile:nth-child(6n+3){ background: linear-gradient(160deg, var(--sea-foam), #4A90B8); box-shadow: 0 6px 0 #2E6E93; }
+.skill-tile:nth-child(6n+4){ background: linear-gradient(160deg, #E0A7D8, #B85FA8); box-shadow: 0 6px 0 #8A3F7C; }
+.skill-tile:nth-child(6n+5){ background: linear-gradient(160deg, #F2C46D, var(--gold)); box-shadow: 0 6px 0 #B5822A; }
+.skill-tile:nth-child(6n){ background: linear-gradient(160deg, #A8C8F0, #6C9AD8); box-shadow: 0 6px 0 #45699E; }
 .mode-icon{ font-size:34px; display:block; margin-bottom:8px; }
 .mode-title{ font-size:19px; font-weight:800; margin:0 0 4px; }
 .mode-desc{ font-size:13px; margin:0; opacity:0.85; }
@@ -35,6 +40,14 @@
 .stage-btn:active{ transform: translateY(3px); box-shadow:none; }
 .stage-btn .stage-title{ font-size:17px; font-weight:800; margin:0 0 2px; }
 .stage-btn .stage-desc{ font-size:13px; margin:0; opacity:0.85; }
+.stage-btn:disabled{ opacity:0.55; cursor:default; }
+/* Already-passed stages get the "good" green treatment; attempted-but-not-
+   passed ones get a softer outline - so a child can tell at a glance which
+   stages they've already cleared vs. just tried. */
+.stage-btn.stage-btn--passed{
+  background: linear-gradient(160deg, #9DE0C8, var(--good)); box-shadow: 0 6px 0 #1E7267;
+}
+.stage-btn.stage-btn--attempted{ outline: 2px dashed rgba(255,255,255,0.4); }
 
 /* ---------- Chest progress ---------- */
 .chest-track{
@@ -56,17 +69,18 @@
 .q-label{
   font-size:14px; color: var(--sea-foam); margin:0 0 10px;
 }
-.q-value{
-  font-size: clamp(30px, 9vw, 48px);
-  font-weight:800;
+/* The question area now always shows the AI-generated question's full
+   text (every skill is a 4-option multiple choice) rather than a short
+   instruction line above a separate big number/equation display. */
+.q-label.question-text{
+  font-size: clamp(17px, 4.5vw, 22px);
+  font-weight:700;
   color: var(--parchment);
   background: rgba(0,0,0,0.2);
   border-radius:16px;
-  padding: 18px 10px;
-  line-height:1.25;
+  padding: 18px 16px;
+  line-height:1.4;
 }
-.q-value .op{ color: var(--sand); }
-.q-value.equation{ font-size: clamp(20px, 5.5vw, 28px); line-height:1.4; }
 
 .choices{
   display:grid; grid-template-columns: 1fr 1fr; gap:12px;
@@ -87,57 +101,6 @@
 .choice-btn.correct{ background: var(--good); color:white; box-shadow:0 5px 0 #1E7267; }
 .choice-btn.wrong{ background: var(--coral); color:white; box-shadow:0 5px 0 #A6432C; }
 .choice-btn:disabled{ cursor:default; }
-
-/* ---------- Column math (carrying / borrowing) ---------- */
-.regroup-hint{
-  text-align:center;
-  font-size:13px;
-  color: var(--sea-foam);
-  margin: 0 0 14px;
-}
-.column-math{ display:flex; justify-content:center; margin-bottom:18px; }
-.col-table{ border-collapse:collapse; }
-.col-table td{ padding: 4px 9px; text-align:center; }
-.place-label{
-  font-size:11px; letter-spacing:1px; color: var(--sea-foam); font-weight:700;
-}
-.sign-cell{
-  width:24px; font-size:22px; font-weight:800; color: var(--sand);
-  text-align:right; vertical-align:bottom; padding-right:2px !important;
-}
-.operand-digit{
-  font-size: clamp(24px, 7vw, 32px);
-  font-weight:800;
-  color: var(--parchment);
-  min-width:48px;
-}
-.carry-box, .ans-box{
-  width: clamp(40px, 11vw, 52px);
-  text-align:center;
-  font-family:inherit;
-  border-radius:8px;
-  border: 2px solid rgba(255,255,255,0.25);
-  -moz-appearance: textfield;
-  padding:0;
-}
-.carry-box{
-  height:30px; font-size:17px; font-weight:700;
-  background: rgba(255,255,255,0.08);
-  color: var(--gold);
-  border-style: dashed;
-}
-.carry-box:disabled{ visibility:hidden; }
-.ans-box{
-  height: clamp(40px, 11vw, 52px);
-  font-size: clamp(24px, 7vw, 30px);
-  font-weight:800;
-  background: rgba(0,0,0,0.25);
-  color: var(--parchment);
-}
-.carry-box:focus, .ans-box:focus{ outline:none; border-color: var(--gold); }
-.ans-box.correct{ background: var(--good); color:white; border-color: var(--good); }
-.ans-box.wrong{ background: var(--coral); color:white; border-color: var(--coral); }
-.line-row td{ border-bottom: 3px solid var(--sand); padding: 0 7px 6px !important; }
 
 /* ---------- Level up / complete screen ---------- */
 .celebrate{ text-align:center; position:relative; overflow:hidden; }
@@ -214,6 +177,11 @@
 .history-table th{ color: var(--sea-foam); font-weight:700; }
 .redeemed-badge{ color: var(--good); }
 .unredeemed-badge{ color: var(--gold); }
+.skill-chip-list{ display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+.skill-chip{
+  display:inline-block; font-size:12px; background: rgba(0,0,0,0.2);
+  border-radius:999px; padding:5px 12px; color: var(--parchment);
+}
 .family-code-display{
   text-align:center; font-size:28px; font-weight:800; letter-spacing:4px;
   color: var(--gold); background: rgba(0,0,0,0.2); border-radius:12px;
@@ -258,7 +226,7 @@
   padding:3px 10px;
 }
 
-/* ---------- Story Cove ---------- */
+/* ---------- Shared context (e.g. a reading passage) ---------- */
 .passage-title{
   margin:0 0 12px; font-size: clamp(20px, 5.5vw, 26px); color: var(--gold); text-align:center;
 }

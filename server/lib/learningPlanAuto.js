@@ -1,19 +1,21 @@
 const pool = require('../db/pool');
 const config = require('../config/env');
 const { generateLearningPlan } = require('./llm');
-const { maybeGenerateReadingPassage } = require('./readingPassageAuto');
+const { reconcileChildSkills } = require('./skillProgress');
+const { maybeGenerateStageContentForNewSkills } = require('./skillContentAuto');
 
 // Prevents two completions landing close together from triggering two
 // concurrent LLM calls for the same child.
 const inProgress = new Set();
 
-const MODE_LABELS = {
-  round: 'Round Up Cove (rounding)',
-  addsub: 'Treasure Math (addition/subtraction)',
-  reading: 'Story Cove (reading comprehension)',
-};
+async function buildPerformanceSummary(childId, attempts) {
+  const slugs = Array.from(new Set(attempts.map((a) => a.game_mode)));
+  const { rows: skillRows } = await pool.query(
+    'SELECT slug, title FROM child_skills WHERE child_id = $1 AND slug = ANY($2::varchar[])',
+    [childId, slugs]
+  );
+  const labels = new Map(skillRows.map((s) => [s.slug, s.title]));
 
-function buildPerformanceSummary(attempts) {
   const groups = new Map();
   for (const a of attempts) {
     const key = `${a.game_mode}:${a.stage}`;
@@ -22,7 +24,7 @@ function buildPerformanceSummary(attempts) {
   }
   return Array.from(groups.values()).map((g) => {
     const avg = g.accuracies.reduce((sum, a) => sum + a, 0) / g.accuracies.length;
-    const label = MODE_LABELS[g.mode] || g.mode;
+    const label = labels.get(g.mode) || g.mode;
     const pcts = g.accuracies.map((a) => `${Math.round(a * 100)}%`).join(', ');
     return `- ${label}, Stage ${g.stage}: ${g.accuracies.length} attempt(s), accuracy ${pcts} (average ${Math.round(avg * 100)}%)`;
   }).join('\n');
@@ -33,7 +35,10 @@ function buildPerformanceSummary(attempts) {
 // in), only after enough new completed attempts have accumulated since the
 // last update, and only if the parent hasn't turned it off for this child.
 // Never awaited by the caller - a kid should never wait on a ~30s LLM call
-// just to see their stage-complete screen.
+// just to see their stage-complete screen. Now only adjusts the skill list
+// itself and each skill's recommended starting stage - per-stage content
+// difficulty adapts independently, on every stage transition, via
+// server/lib/skillContentAuto.js's own performance summary.
 async function maybeAutoRecalibrate(childId) {
   if (inProgress.has(childId)) return;
 
@@ -63,17 +68,22 @@ async function maybeAutoRecalibrate(childId) {
 
     inProgress.add(childId);
 
-    const summary = buildPerformanceSummary(attemptsResult.rows);
+    const summary = await buildPerformanceSummary(childId, attemptsResult.rows);
     const notes = [
       `Previous notes from the parent: ${latestPlan.parent_notes}`,
       '',
       'Recent practice performance since the last plan update:',
       summary,
       '',
-      'Update the plan based on this performance. If they are doing very well (high accuracy, passing easily), increase the challenge - larger numbers, a later starting stage, less emphasis on skills they have clearly mastered. If they are still struggling in an area, keep or increase support there.',
+      'Update the skill list based on this performance. If a skill is being passed easily, you can raise its recommendedStartingStage or drop it if it seems mastered. If they are still struggling in an area, keep it (or add related skills).',
     ].join('\n');
 
-    const profile = await generateLearningPlan({ grade: latestPlan.grade, notes });
+    const { rows: currentSkills } = await pool.query(
+      'SELECT slug, title, description FROM child_skills WHERE child_id = $1 AND active = true',
+      [childId]
+    );
+
+    const profile = await generateLearningPlan({ grade: latestPlan.grade, notes, currentSkills });
 
     const insertResult = await pool.query(
       `INSERT INTO learning_plans (child_id, grade, parent_notes, profile, generated_by, trigger_summary)
@@ -83,7 +93,9 @@ async function maybeAutoRecalibrate(childId) {
     );
     console.log(`Auto-recalibrated learning plan for child ${childId}`);
 
-    maybeGenerateReadingPassage(childId, { ...insertResult.rows[0], profile }).catch(() => {});
+    const planRow = insertResult.rows[0];
+    await reconcileChildSkills(childId, planRow.id, profile.skills);
+    maybeGenerateStageContentForNewSkills(childId, planRow).catch(() => {});
   } catch (err) {
     console.error(`Auto-recalibration failed for child ${childId}:`, err.message);
   } finally {

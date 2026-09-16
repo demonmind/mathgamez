@@ -7,7 +7,8 @@ const { requireParent } = require('../middleware/auth');
 const { learningPlanLimiter } = require('../middleware/rateLimiters');
 const { processDocument, isSupportedMimeType } = require('../lib/documentText');
 const { generateLearningPlan } = require('../lib/llm');
-const { maybeGenerateReadingPassage } = require('../lib/readingPassageAuto');
+const { reconcileChildSkills } = require('../lib/skillProgress');
+const { maybeGenerateStageContentForNewSkills } = require('../lib/skillContentAuto');
 const {
   isValidDisplayName,
   isValidAvatarEmoji,
@@ -163,11 +164,12 @@ router.patch('/children/:id', requireParent, async (req, res, next) => {
   }
 });
 
-// Runs the local LLM once to produce a small set of tuning knobs for this
-// child's question generation (never actual math questions/answers - see
-// server/lib/llm.js). Accepts an optional document (txt/pdf/image) as
-// extra context. Slow (LLM inference) - the frontend should show a loading
-// state; learningPlanLimiter bounds how often this can be triggered.
+// Runs the local LLM once to decide which open-ended skills this child
+// needs practice in (see server/lib/llm.js) - no fixed taxonomy, the model
+// reads the parent's notes + grade and proposes however many apply.
+// Accepts an optional document (txt/pdf/image) as extra context. Slow (LLM
+// inference) - the frontend should show a loading state; learningPlanLimiter
+// bounds how often this can be triggered.
 router.post('/children/:id/learning-plan', requireParent, learningPlanLimiter, uploadDocument, async (req, res, next) => {
   try {
     const childId = Number(req.params.id);
@@ -208,7 +210,12 @@ router.post('/children/:id/learning-plan', requireParent, learningPlanLimiter, u
       documentImage = processed.image || null;
     }
 
-    const profile = await generateLearningPlan({ grade, notes, documentExcerpt, documentImage });
+    const { rows: currentSkills } = await pool.query(
+      'SELECT slug, title, description FROM child_skills WHERE child_id = $1 AND active = true',
+      [childId]
+    );
+
+    const profile = await generateLearningPlan({ grade, notes, documentExcerpt, documentImage, currentSkills });
 
     const result = await pool.query(
       `INSERT INTO learning_plans
@@ -217,12 +224,18 @@ router.post('/children/:id/learning-plan', requireParent, learningPlanLimiter, u
        RETURNING id, grade, parent_notes, document_filename, profile, generated_by, trigger_summary, created_at`,
       [childId, grade, notes.trim(), documentFilename, documentExcerpt, JSON.stringify(profile), req.session.parentId]
     );
+    const planRow = result.rows[0];
 
-    res.status(201).json(result.rows[0]);
+    // Fast (no LLM call) - awaited so the parent's immediate follow-up
+    // fetch of the skill list already reflects the new tiles.
+    await reconcileChildSkills(childId, planRow.id, profile.skills);
 
-    // Fire-and-forget: a two-pass (generate + verify) passage call can take
-    // well over a minute and must never delay the parent's response.
-    maybeGenerateReadingPassage(childId, result.rows[0]).catch(() => {});
+    res.status(201).json(planRow);
+
+    // Fire-and-forget: each skill's two-pass (generate + verify) content
+    // call can take well over a minute and must never delay the parent's
+    // response.
+    maybeGenerateStageContentForNewSkills(childId, planRow).catch(() => {});
   } catch (err) {
     next(err);
   }
@@ -282,7 +295,12 @@ router.patch('/children/:id/learning-plan/:planId', requireParent, learningPlanL
       documentImage = processed.image || null;
     }
 
-    const profile = await generateLearningPlan({ grade, notes, documentExcerpt, documentImage });
+    const { rows: currentSkills } = await pool.query(
+      'SELECT slug, title, description FROM child_skills WHERE child_id = $1 AND active = true',
+      [childId]
+    );
+
+    const profile = await generateLearningPlan({ grade, notes, documentExcerpt, documentImage, currentSkills });
 
     const result = await pool.query(
       `UPDATE learning_plans
@@ -292,12 +310,16 @@ router.patch('/children/:id/learning-plan/:planId', requireParent, learningPlanL
        RETURNING id, grade, parent_notes, document_filename, profile, generated_by, trigger_summary, created_at`,
       [grade, notes.trim(), documentFilename, documentExcerpt, JSON.stringify(profile), planId]
     );
+    const planRow = result.rows[0];
 
-    res.json(result.rows[0]);
+    await reconcileChildSkills(childId, planRow.id, profile.skills);
 
-    // Fire-and-forget, same as the initial-generation path - the profile
-    // may have newly turned reading practice on/off.
-    maybeGenerateReadingPassage(childId, result.rows[0]).catch(() => {});
+    res.json(planRow);
+
+    // Fire-and-forget, same as the initial-generation path - only
+    // generates content for skills that don't have any yet at their
+    // available stage (e.g. a newly-added skill).
+    maybeGenerateStageContentForNewSkills(childId, planRow).catch(() => {});
   } catch (err) {
     next(err);
   }

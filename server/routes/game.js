@@ -1,85 +1,100 @@
 const express = require('express');
 const pool = require('../db/pool');
 const { requireChild } = require('../middleware/auth');
-const { isValidGameMode, isValidStage } = require('../lib/validate');
+const { isValidSkillSlug, isValidStage } = require('../lib/validate');
 const { maybeAutoRecalibrate } = require('../lib/learningPlanAuto');
 const { getAvailableStage } = require('../lib/gameProgress');
-const { maybeGenerateReadingPassageForNextStage } = require('../lib/readingPassageAuto');
+const { maybeGenerateStageContentForNextStage } = require('../lib/skillContentAuto');
 
 const router = express.Router();
-const PASS_THRESHOLD = 0.85;
+const PASS_THRESHOLD = 0.90;
 const REWARD_MINUTES = 5;
 
-router.get('/progress', requireChild, async (req, res, next) => {
+// Confirms a slug is both well-formed AND actually one of this child's
+// currently-active skills - the format check alone is not a security
+// boundary, since a client could POST any well-formed slug otherwise.
+async function requireActiveSkill(childId, slug) {
+  if (!isValidSkillSlug(slug)) return null;
+  const { rows } = await pool.query(
+    'SELECT slug, title, description, icon FROM child_skills WHERE child_id = $1 AND slug = $2 AND active = true',
+    [childId, slug]
+  );
+  return rows[0] || null;
+}
+
+// Per-skill progress: which stages (up to the unlocked one) actually have
+// generated content, and which are already passed - content generation is
+// async for every skill now (not just reading), so a stage can be
+// "unlocked" but have nothing to play yet.
+router.get('/skills/:slug/progress', requireChild, async (req, res, next) => {
   try {
-    const gameMode = req.query.mode;
-    if (!isValidGameMode(gameMode)) {
-      return res.status(400).json({ error: 'Invalid game mode' });
+    const skill = await requireActiveSkill(req.session.childId, req.params.slug);
+    if (!skill) {
+      return res.status(404).json({ error: 'Skill not found' });
     }
-    const availableStage = await getAvailableStage(req.session.childId, gameMode);
-    res.json({ availableStage });
-  } catch (err) {
-    next(err);
-  }
-});
 
-// Reading-only: which stages (up to the unlocked one) actually have at
-// least one generated passage, since unlike math there's no infinite
-// procedural supply - a stage can be "unlocked" but have nothing to play
-// yet if the AI hasn't generated anything for it.
-router.get('/reading/stages', requireChild, async (req, res, next) => {
-  try {
-    const availableStage = await getAvailableStage(req.session.childId, 'reading');
+    const availableStage = await getAvailableStage(req.session.childId, skill.slug);
     const result = await pool.query(
-      `SELECT stage, COUNT(*)::int AS passage_count
-       FROM reading_passages
-       WHERE child_id = $1 AND stage <= $2
-       GROUP BY stage
-       ORDER BY stage`,
-      [req.session.childId, availableStage]
+      `SELECT s.stage,
+              EXISTS(
+                SELECT 1 FROM skill_stage_content c
+                WHERE c.child_id = $1 AND c.skill_slug = $2 AND c.stage = s.stage
+              ) AS "hasContent",
+              bool_or(a.completed_at IS NOT NULL) AS attempted,
+              bool_or(a.passed_threshold = true) AS passed
+       FROM generate_series(1, $3::int) AS s(stage)
+       LEFT JOIN game_stage_attempts a
+         ON a.child_id = $1 AND a.game_mode = $2 AND a.stage = s.stage
+       GROUP BY s.stage
+       ORDER BY s.stage`,
+      [req.session.childId, skill.slug, availableStage]
     );
-    res.json({ stages: result.rows });
+
+    res.json({ availableStage, stages: result.rows });
   } catch (err) {
     next(err);
   }
 });
 
-// Picks a passage for this child at the given stage - prefers one they
-// haven't completed yet, falls back to any (mastery-focused replay, same
-// spirit as math stages). correctIndex IS included here: the app already
-// grades rounding/add-sub answers client-side and only reports
-// correct/incorrect booleans to the server (see public/js/game.js), so
-// reading follows the same established trust model rather than a stricter
-// one applied only to this mode.
-router.get('/reading/passage', requireChild, async (req, res, next) => {
+// Picks stage content for this child at the given stage - prefers one they
+// haven't completed yet, falls back to any (mastery-focused replay).
+// correctIndex IS included here: the app grades every skill client-side
+// and only reports correct/incorrect booleans to the server (see
+// public/js/game.js) - this is the established trust model, applied
+// uniformly across all skills, not a stricter one for any particular mode.
+router.get('/skills/:slug/content', requireChild, async (req, res, next) => {
   try {
+    const skill = await requireActiveSkill(req.session.childId, req.params.slug);
+    if (!skill) {
+      return res.status(404).json({ error: 'Skill not found' });
+    }
     const stage = req.query.stage;
     if (!isValidStage(stage)) {
       return res.status(400).json({ error: 'Invalid stage' });
     }
 
     const result = await pool.query(
-      `SELECT rp.id, rp.title, rp.passage_text, rp.questions,
+      `SELECT c.id, c.title, c.shared_context, c.questions,
               EXISTS(
-                SELECT 1 FROM game_stage_attempts gsa
-                WHERE gsa.reading_passage_id = rp.id AND gsa.child_id = $1 AND gsa.completed_at IS NOT NULL
+                SELECT 1 FROM game_stage_attempts a
+                WHERE a.content_id = c.id AND a.child_id = $1 AND a.completed_at IS NOT NULL
               ) AS previously_completed
-       FROM reading_passages rp
-       WHERE rp.child_id = $1 AND rp.stage = $2
+       FROM skill_stage_content c
+       WHERE c.child_id = $1 AND c.skill_slug = $2 AND c.stage = $3
        ORDER BY previously_completed ASC, random()
        LIMIT 1`,
-      [req.session.childId, stage]
+      [req.session.childId, skill.slug, stage]
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'No stories available for this stage yet' });
+      return res.status(404).json({ error: "This stage isn't ready yet - try again in a moment" });
     }
 
     const row = result.rows[0];
     res.json({
-      passageId: row.id,
+      contentId: row.id,
       title: row.title,
-      passageText: row.passage_text,
+      sharedContext: row.shared_context,
       questions: row.questions,
     });
   } catch (err) {
@@ -89,35 +104,33 @@ router.get('/reading/passage', requireChild, async (req, res, next) => {
 
 router.post('/attempts/start', requireChild, async (req, res, next) => {
   try {
-    const { gameMode, stage, readingPassageId } = req.body || {};
-    if (!isValidGameMode(gameMode) || !isValidStage(stage)) {
-      return res.status(400).json({ error: 'Invalid game mode or stage' });
+    const { skillSlug, stage, contentId } = req.body || {};
+    const skill = await requireActiveSkill(req.session.childId, skillSlug);
+    if (!skill || !isValidStage(stage)) {
+      return res.status(400).json({ error: 'Invalid skill or stage' });
     }
 
-    const availableStage = await getAvailableStage(req.session.childId, gameMode);
+    const availableStage = await getAvailableStage(req.session.childId, skill.slug);
     if (Number(stage) > availableStage) {
       return res.status(400).json({ error: 'That stage is not unlocked yet' });
     }
 
-    let passageId = null;
-    if (gameMode === 'reading') {
-      passageId = Number(readingPassageId);
-      if (!Number.isInteger(passageId)) {
-        return res.status(400).json({ error: 'Missing reading passage' });
-      }
-      const passageResult = await pool.query(
-        'SELECT id FROM reading_passages WHERE id = $1 AND child_id = $2 AND stage = $3',
-        [passageId, req.session.childId, stage]
-      );
-      if (passageResult.rows.length === 0) {
-        return res.status(404).json({ error: 'Reading passage not found' });
-      }
+    const parsedContentId = Number(contentId);
+    if (!Number.isInteger(parsedContentId)) {
+      return res.status(400).json({ error: 'Missing stage content' });
+    }
+    const contentResult = await pool.query(
+      'SELECT id FROM skill_stage_content WHERE id = $1 AND child_id = $2 AND skill_slug = $3 AND stage = $4',
+      [parsedContentId, req.session.childId, skill.slug, stage]
+    );
+    if (contentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Stage content not found' });
     }
 
     const result = await pool.query(
-      `INSERT INTO game_stage_attempts (child_id, game_mode, stage, reading_passage_id)
+      `INSERT INTO game_stage_attempts (child_id, game_mode, stage, content_id)
        VALUES ($1, $2, $3, $4) RETURNING id`,
-      [req.session.childId, gameMode, stage, passageId]
+      [req.session.childId, skill.slug, stage, parsedContentId]
     );
 
     res.status(201).json({ attemptId: result.rows[0].id });
@@ -175,7 +188,7 @@ router.post('/attempts/:id/complete', requireChild, async (req, res, next) => {
       return res.status(404).json({ error: 'Attempt not found or already completed' });
     }
 
-    const { game_mode: gameMode, correct_count: correctCount, incorrect_count: incorrectCount } = attemptResult.rows[0];
+    const { game_mode: skillSlug, correct_count: correctCount, incorrect_count: incorrectCount } = attemptResult.rows[0];
     const total = correctCount + incorrectCount;
     const accuracy = total > 0 ? correctCount / total : 0;
     const passed = total > 0 && accuracy >= PASS_THRESHOLD;
@@ -207,12 +220,10 @@ router.post('/attempts/:id/complete', requireChild, async (req, res, next) => {
     // and has enough new completed attempts since the last update.
     maybeAutoRecalibrate(req.session.childId).catch(() => {});
 
-    // Reading completion unlocks the next stage - make sure a passage
-    // actually exists for it (no-ops if one's already there or reading
-    // practice isn't enabled for this child).
-    if (gameMode === 'reading') {
-      maybeGenerateReadingPassageForNextStage(req.session.childId).catch(() => {});
-    }
+    // Completing a stage unlocks the next one - make sure content actually
+    // exists for it (no-ops if it's already there). Applies to every
+    // skill now, not just reading.
+    maybeGenerateStageContentForNextStage(req.session.childId, skillSlug).catch(() => {});
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);
@@ -221,25 +232,26 @@ router.post('/attempts/:id/complete', requireChild, async (req, res, next) => {
   }
 });
 
-// Kid-facing: only the tuning knobs the game generators actually use.
-// focusSummary is phrased as advice to the parent and isn't needed here;
-// the parent's raw notes/document stay parent-only (server/routes/family.js).
+// Kid-facing: the child's currently-active skills, used to render tiles
+// and drive stage/content requests. focusSummary is phrased as advice to
+// the parent and isn't needed here; raw parent notes stay parent-only
+// (server/routes/family.js).
 router.get('/learning-plan', requireChild, async (req, res, next) => {
   try {
     const result = await pool.query(
-      `SELECT profile FROM learning_plans WHERE child_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      `SELECT slug, title, description, icon, recommended_starting_stage
+       FROM child_skills WHERE child_id = $1 AND active = true
+       ORDER BY first_seen_at`,
       [req.session.childId]
     );
-    const profile = result.rows[0] ? result.rows[0].profile : null;
-    const tunables = profile && {
-      recommendedMode: profile.recommendedMode,
-      recommendedStartingStage: profile.recommendedStartingStage,
-      subtractionEmphasis: profile.subtractionEmphasis,
-      extraWordProblems: profile.extraWordProblems,
-      numberRangeAdjustment: profile.numberRangeAdjustment,
-      includeReadingPractice: profile.includeReadingPractice,
-    };
-    res.json({ profile: tunables });
+    const skills = result.rows.map((r) => ({
+      slug: r.slug,
+      title: r.title,
+      description: r.description,
+      icon: r.icon,
+      recommendedStartingStage: r.recommended_starting_stage,
+    }));
+    res.json({ skills });
   } catch (err) {
     next(err);
   }
