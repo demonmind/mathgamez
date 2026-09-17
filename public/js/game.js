@@ -3,8 +3,8 @@
   let stage = 1;
   let score = 0;
   let streak = 0;
-  let chest = 0;            // 0-CHEST_GOAL correct answers per stage
-  let CHEST_GOAL = 4;       // always the stage content's question count (always 4 today)
+  let chest = 0;            // correct answers so far this stage - visual fill only, NOT what triggers stage completion (see registerResult)
+  let CHEST_GOAL = 4;       // the stage content's total question count - fill-bar denominator
   let current = {};         // current question data: {correctIndex, correctText}
   let locked = false;       // prevents double-answering
 
@@ -462,7 +462,15 @@
   }
 
   // ---------- Shared result handling ----------
-  function registerResult(isCorrect){
+  // Awaits the /answer report before deciding what happens next - this
+  // closes a real race that used to exist here: the last answer's POST and
+  // the follow-up /complete call were both fired without waiting on the
+  // first, so on a slower connection /complete could reach the server
+  // before the final /answer write had committed, making a genuinely
+  // finished stage get rejected as "incomplete" (server-side, completion
+  // now requires the exact recorded answer count to match the stage's
+  // question count - see server/routes/game.js).
+  async function registerResult(isCorrect){
     if(isCorrect){
       score += 10;
       streak += 1;
@@ -480,10 +488,21 @@
     // computed server-side - never trust the client for the reward-granting
     // calculation.
     if(currentAttemptId){
-      api.post(`/api/game/attempts/${currentAttemptId}/answer`, { correct: isCorrect }).catch(() => {});
+      try{
+        await api.post(`/api/game/attempts/${currentAttemptId}/answer`, { correct: isCorrect });
+      }catch(err){ /* finishStage()'s own /complete call will surface this if it matters */ }
     }
 
-    if(chest >= CHEST_GOAL){
+    // Advance based on how many questions are LEFT, not how many were
+    // answered correctly - content is now a fixed, finite set (see
+    // renderSkillQuestion), not an infinite procedural stream like the old
+    // math generators were. Gating advancement on `chest` (correct-answer
+    // count) reaching CHEST_GOAL meant a single wrong answer made it
+    // mathematically impossible to ever finish a stage - the game would
+    // run out of questions to show and crash trying to render past the end
+    // of the array. Pass/fail is decided server-side from accuracy
+    // (PASS_THRESHOLD in server/routes/game.js), independent of this.
+    if(questionIndex >= currentContent.questions.length){
       finishStage();
     } else {
       setTimeout(nextQuestion, isCorrect ? 900 : 1500);
@@ -499,7 +518,15 @@
           await refreshPouch();
           popPouch();
         }
-      }catch(err){ /* fall through to celebration with no reward info */ }
+      }catch(err){
+        // Never show a "you did it!" celebration for a stage the server
+        // didn't actually record as complete - that's exactly what caused
+        // real confusion (a child saw success, but nothing was saved and
+        // the next stage never unlocked). Tell them plainly instead.
+        feedbackEl.textContent = "Hmm, that didn't save properly - please try this stage again.";
+        feedbackEl.className = 'feedback bad';
+        return;
+      }
     }
     setTimeout(showCelebration, 700);
   }
