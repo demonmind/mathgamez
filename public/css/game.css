@@ -88,7 +88,7 @@
 .scratchpad-canvas{
   display:block;
   width:100%;
-  height:300px;
+  height:600px;
   /* A paper-like surface regardless of app theme, so pen strokes read
      clearly no matter what - matches how a real scratchpad looks. */
   background: #FBF8EF;
