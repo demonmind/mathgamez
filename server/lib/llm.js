@@ -29,9 +29,10 @@ const SKILL_VERIFY_SYSTEM_PROMPT = `You are fact-checking a children's practice 
 }`;
 
 function skillContentGenerateSystemPrompt(skill, stage) {
+  const count = config.questionsPerStage;
   return `You are writing practice content for a children's learning app, for the skill "${skill.title}" (${skill.description}). This is stage ${stage} for this child - stage 1 is introductory, and there is no fixed maximum stage, so each stage after the first should be moderately harder than the one before it. If you are given a performance summary below, use it to judge how much harder to make this stage; if not, use standard age/grade-appropriate difficulty for stage ${stage}.
 
-If this skill is about reading, writing, or language comprehension, write ONE short original age-appropriate passage and set "sharedContext" to it; all 4 questions must then be answerable directly from that passage. For every other kind of skill (arithmetic, fractions, telling time, spelling, vocabulary, etc.), set "sharedContext" to null and make each of the 4 "questions" fully self-contained - put the whole problem, including any word-problem wording or the actual expression to solve, directly in that item's "question" field. Never include anything scary, violent, sad, or otherwise inappropriate for a young child.
+If this skill is about reading, writing, or language comprehension, write ONE short original age-appropriate passage and set "sharedContext" to it; all ${count} questions must then be answerable directly from that passage. For every other kind of skill (arithmetic, fractions, telling time, spelling, vocabulary, etc.), set "sharedContext" to null and make each of the ${count} "questions" fully self-contained - put the whole problem, including any word-problem wording or the actual expression to solve, directly in that item's "question" field. Vary the numbers/wording across questions so it doesn't feel repetitive. Never include anything scary, violent, sad, or otherwise inappropriate for a young child.
 
 Each question needs exactly 4 answer options with exactly one clearly, unambiguously correct answer - avoid ambiguous or trick questions. For arithmetic or any question with a computable answer, work the problem out carefully yourself before writing the answer key.
 
@@ -43,7 +44,7 @@ Respond with ONLY a single JSON object, no markdown code fences, no commentary. 
     {"question": "<self-contained question or prompt>", "options": ["<option 1>", "<option 2>", "<option 3>", "<option 4>"], "correctIndex": <0, 1, 2, or 3>}
   ]
 }
-"questions" must contain exactly 4 items.`;
+"questions" must contain exactly ${count} items.`;
 }
 
 const CODE_FENCE_RE = /^```(?:json)?\s*([\s\S]*?)\s*```$/i;
@@ -263,7 +264,7 @@ async function generateSkillStageContent({ grade, skill, stage, notes, performan
     const content = await runJsonPrompt(
       genMessages,
       isValidSkillStageContent,
-      'That was not valid JSON matching the exact schema (title, sharedContext, and questions with exactly 4 items, each with question/options[4]/correctIndex). Respond again with ONLY the JSON object.',
+      `That was not valid JSON matching the exact schema (title, sharedContext, and questions with exactly ${config.questionsPerStage} items, each with question/options[4]/correctIndex). Respond again with ONLY the JSON object.`,
       undefined,
       `generateSkillStageContent:${skill.slug}:stage${stage}:generate`
     );

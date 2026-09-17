@@ -9,10 +9,6 @@ const { maybeGenerateStageContentForNextStage } = require('../lib/skillContentAu
 const router = express.Router();
 const PASS_THRESHOLD = 0.90;
 const REWARD_MINUTES = 5;
-// Every stage's AI-generated content is exactly this many questions - see
-// isValidSkillStageContent in server/lib/validate.js, which rejects any
-// content that doesn't have exactly 4.
-const EXPECTED_QUESTIONS = 4;
 
 // Confirms a slug is both well-formed AND actually one of this child's
 // currently-active skills - the format check alone is not a security
@@ -192,10 +188,12 @@ router.post('/attempts/:id/complete', requireChild, async (req, res, next) => {
     await client.query('BEGIN');
 
     const attemptResult = await client.query(
-      `SELECT id, game_mode, stage, correct_count, incorrect_count
-       FROM game_stage_attempts
-       WHERE id = $1 AND child_id = $2 AND completed_at IS NULL
-       FOR UPDATE`,
+      `SELECT a.id, a.game_mode, a.stage, a.correct_count, a.incorrect_count,
+              jsonb_array_length(c.questions) AS expected_questions
+       FROM game_stage_attempts a
+       JOIN skill_stage_content c ON c.id = a.content_id
+       WHERE a.id = $1 AND a.child_id = $2 AND a.completed_at IS NULL
+       FOR UPDATE OF a`,
       [attemptId, req.session.childId]
     );
 
@@ -204,14 +202,16 @@ router.post('/attempts/:id/complete', requireChild, async (req, res, next) => {
       return res.status(404).json({ error: 'Attempt not found or already completed' });
     }
 
-    const { game_mode: skillSlug, stage, correct_count: correctCount, incorrect_count: incorrectCount } = attemptResult.rows[0];
+    const { game_mode: skillSlug, stage, correct_count: correctCount, incorrect_count: incorrectCount, expected_questions: expectedQuestions } = attemptResult.rows[0];
     const total = correctCount + incorrectCount;
 
-    // Every stage's content is exactly EXPECTED_QUESTIONS questions (see
-    // isValidSkillStageContent) - require that many recorded answers before
-    // an attempt can be completed at all, so a single forged /answer call
-    // can't fast-track a pass.
-    if (total !== EXPECTED_QUESTIONS) {
+    // Checked against THIS attempt's own content, not a fixed constant -
+    // config.questionsPerStage can change over time (see config/env.js)
+    // without stranding older stages that were generated with a different
+    // question count. Require exactly that many recorded answers before an
+    // attempt can be completed, so a single forged /answer call can't
+    // fast-track a pass.
+    if (total !== expectedQuestions) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'This attempt is incomplete' });
     }

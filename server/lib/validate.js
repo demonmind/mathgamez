@@ -1,3 +1,5 @@
+const config = require('../config/env');
+
 const AVATAR_EMOJI_ALLOWLIST = [
   '🏴‍☠️', '🦜', '⚓', '🐙', '🦈', '🧜', '🐢', '🦀', '🐬', '⛵',
   '🗺️', '💰', '🏝️', '🦑', '🐳', '🌊', '👑', '🔱', '🦩', '🐠',
@@ -193,7 +195,7 @@ function isValidSkillContentOption(value) {
 // Strictly validates the LLM's generated stage content against the exact
 // schema given in the system prompt - this becomes actual kid-facing
 // content, so shape and question count must be exact. sharedContext is
-// nullable: reading/language skills use it as a shared passage for all 4
+// nullable: reading/language skills use it as a shared passage for all
 // questions, other skills (math, etc.) leave it null and make each
 // question fully self-contained.
 function isValidSkillStageContent(value) {
@@ -201,7 +203,7 @@ function isValidSkillStageContent(value) {
   if (typeof value.title !== 'string' || value.title.trim().length < 1 || value.title.length > 200) return false;
   if (value.sharedContext !== null &&
       (typeof value.sharedContext !== 'string' || value.sharedContext.trim().length < 20 || value.sharedContext.length > 4000)) return false;
-  if (!Array.isArray(value.questions) || value.questions.length !== 4) return false;
+  if (!Array.isArray(value.questions) || value.questions.length !== config.questionsPerStage) return false;
   for (const q of value.questions) {
     if (!q || typeof q !== 'object') return false;
     if (typeof q.question !== 'string' || q.question.trim().length < 1 || q.question.length > 500) return false;

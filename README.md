@@ -91,9 +91,10 @@ becomes one tile in the game (`GET /api/game/learning-plan`), and a child
 with no plan yet simply sees no tiles.
 
 Every stage of every skill is itself AI-generated content (a short shared
-passage plus 4 multiple-choice questions for reading/language skills, or 4
+passage plus multiple-choice questions for reading/language skills, or
 fully self-contained questions for everything else - arithmetic, spelling,
-telling time, etc.), written and cached once, then replayed. **This is a
+telling time, etc. - see `QUESTIONS_PER_STAGE`, default 8), written and
+cached once, then replayed. **This is a
 deliberate step down from an earlier design where math was 100%
 deterministic** - the model can occasionally get an arithmetic answer key
 wrong the same way it can misjudge anything else. The mitigation is a

@@ -43,6 +43,14 @@ const config = {
   // learning plan update) before the background job re-runs the LLM to
   // re-calibrate their plan based on actual performance.
   autoRecalThreshold: parseInt(process.env.LEARNING_PLAN_AUTO_RECAL_THRESHOLD, 10) || 5,
+  // How many questions the AI generates per stage. A stage grants the same
+  // flat reward regardless of length, so this is the knob for how much
+  // practice a reward is actually worth - raised from 4 since stages were
+  // clearing too fast relative to the 5-minute reward. Changing this only
+  // affects newly-generated content; existing stages keep whatever count
+  // they were generated with (server/routes/game.js checks each attempt's
+  // own content length, not this value, when deciding if it's complete).
+  questionsPerStage: parseInt(process.env.QUESTIONS_PER_STAGE, 10) || 8,
 };
 
 module.exports = config;
